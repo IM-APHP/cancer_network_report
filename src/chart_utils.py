@@ -414,7 +414,7 @@ def bar_appareils_years(
     )
     short = {a: (a[:32] + "…" if len(a) > 32 else a) for a in order}
 
-    palette = ["#A8DADC", "#003189"]
+    palette = ["#90BE6D", "#F4A261"]
     fig = go.Figure()
     for i, yr in enumerate(sorted(years)):
         dy = d[d["annee"] == yr].set_index("appareil").reindex(order).reset_index()

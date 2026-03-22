@@ -428,11 +428,19 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     fig_reg_chir = regional_comparison(reg_total, "nb_sejours_chirurgie",
                                        "Séjours chirurgie — AP-HP vs contexte régional")
 
+    # ── Graphique patients par appareil ──
+    fig_bar_app = bar_appareils_years(aphp)
+
     # ── Assembly HTML ──
     content = ""
 
-    # GHU nav en haut
-    content += section("Groupes Hospitaliers Universitaires", ghu_nav_cards_html(), "ghu-nav")
+    # GHU liens sobres
+    ghu_links_global = " &nbsp;|&nbsp; ".join(
+        f'<a href="rapport_{g.lower().replace(" ","_")}.html" style="color:#003189">{g}</a>'
+        for g in GHU_LIST
+    )
+    content += section("Groupes Hospitaliers Universitaires",
+                       f'<div style="line-height:2">{ghu_links_global}</div>', "ghu-nav")
 
     content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
 
@@ -455,13 +463,22 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "ghu")
 
-    organes_link = (
-        '<a href="index.html#nav-organes" style="font-size:.82rem;color:#457B9D;'
-        'text-decoration:none;white-space:nowrap">→ Voir les organes</a>'
-    )
+    # Liens vers pages appareils
+    app_links_global = ""
+    for app in sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique()):
+        app_s = slugify(app)
+        app_links_global += (
+            f'<a href="rapport_appareil_{app_s}.html" style="display:inline-block;'
+            f'margin:3px 8px;color:#457B9D;font-size:.85rem">{app} →</a>'
+        )
     content += section("Analyse par appareil", f"""
+        {chart_card(fig_to_html(fig_bar_app), "full")}
         {chart_card(fig_to_html(fig_heat), "full")}
-    """, "appareils", action=organes_link)
+        <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
+          <strong style="color:#003189">Rapports par appareil :</strong><br>
+          {app_links_global}
+        </div>
+    """, "appareils")
 
     content += section("Contexte régional", f"""
         <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
@@ -582,13 +599,21 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
           {chart_card(fig_to_html(fig_sejours))}
         </div>
     """, "evolution")
-    organes_link = (
-        '<a href="index.html#nav-organes" style="font-size:.82rem;color:#457B9D;'
-        'text-decoration:none;white-space:nowrap">→ Voir les organes</a>'
-    )
-    content += section("Analyse par appareil",
-                       chart_card(fig_to_html(fig_heat), "full"), "appareils",
-                       action=organes_link)
+    app_links_ghu = ""
+    for app in sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique()):
+        app_s = slugify(app)
+        ghu_s = slugify(ghu_name)
+        app_links_ghu += (
+            f'<a href="rapport_appareil_{app_s}_{ghu_s}.html" style="display:inline-block;'
+            f'margin:3px 8px;color:#457B9D;font-size:.85rem">{app} →</a>'
+        )
+    content += section("Analyse par appareil", f"""
+        {chart_card(fig_to_html(fig_heat), "full")}
+        <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
+          <strong style="color:#003189">Rapports par appareil :</strong><br>
+          {app_links_ghu}
+        </div>
+    """, "appareils")
     surv_table = survival_delay_table(surv, aphp, ghu_name)
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie")
@@ -921,38 +946,18 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
         'font-weight:600;font-size:.88rem;white-space:nowrap">Rapport complet AP-HP →</a>'
     )
 
-    # ── Graphiques ──
-    fig_bar = bar_appareils_years(aphp)
-    reg_total = reg[reg.appareil == "TOTAL"]
-    fig_reg   = regional_comparison(reg_total, "nb_patients",
-                                    "Parts de marché régionales — patients")
-
     # ── Liens de navigation ──
     appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
     ghu_links = " &nbsp;|&nbsp; ".join(
         f'<a href="rapport_{g.lower().replace(" ","_")}.html" style="color:#003189">{g}</a>'
         for g in GHU_LIST
     )
-    app_links = ""
-    for app in appareils:
-        app_slug = slugify(app)
-        app_links += (
-            f'<a href="rapport_appareil_{app_slug}.html" style="display:inline-block;'
-            f'margin:3px 8px;color:#003189;font-size:.88rem">{app} →</a><br>'
-        )
     organe_links = organe_nav_links_html(aphp)
 
     # ── Assemblage ──
     content = ""
 
-    # 1. GHU en haut (navigation)
-    content += section(
-        "Groupes Hospitaliers Universitaires",
-        ghu_nav_cards_html(),
-        "ghu",
-    )
-
-    # 2. KPI + bouton inline
+    # 1. KPI + bouton inline
     content += section(
         f"Indicateurs AP-HP {last_year}",
         kpis_html,
@@ -960,29 +965,25 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
         action=btn_global,
     )
 
-    # 3. Deux graphiques pleine largeur
-    content += section("Activité par appareil et contexte régional", f"""
-        {chart_card(fig_to_html(fig_bar), "full")}
-        <div style="margin-top:20px">
-          {chart_card(fig_to_html(fig_reg), "full")}
-        </div>
-    """, "charts")
+    # 2. GHU cards
+    content += section(
+        "Groupes Hospitaliers Universitaires",
+        ghu_nav_cards_html(),
+        "ghu",
+    )
 
-    # 4. Navigation liens simples
+    # 3. Navigation liens simples
     content += section("Rapport global AP-HP",
         '<a href="rapport_global_aphp.html" style="color:#003189;font-size:.92rem">Rapport global AP-HP →</a>',
         "nav-global")
     content += section("Rapports par Groupe Hospitalier Universitaire",
         f'<div style="line-height:2">{ghu_links}</div>', "nav-ghu")
-    content += section("Rapports par appareil", app_links, "nav-appareils")
-    content += section("Rapports par organe", organe_links, "nav-organes")
+    content += section("Rapports par appareil / organe", organe_links, "nav-organes")
 
     nav = "\n".join([
-        '<a href="#ghu">Par GHU</a>',
         '<a href="#kpis">Indicateurs</a>',
-        '<a href="#charts">Graphiques</a>',
-        '<a href="#nav-appareils">Appareils</a>',
-        '<a href="#nav-organes">Organes</a>',
+        '<a href="#ghu">Par GHU</a>',
+        '<a href="#nav-organes">Appareils / Organes</a>',
     ])
 
     html = HTML_TEMPLATE.format(
