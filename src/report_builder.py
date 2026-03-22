@@ -15,6 +15,7 @@ from chart_utils import (
     heatmap_organes, treemap_organes,
     survival_by_stage, survival_evolution,
     delay_evolution, delay_comparison_bar,
+    bar_appareils_years,
     slugify,
     GHU_LIST, TREATMENT_COLS,
 )
@@ -197,11 +198,20 @@ def kpi_card(label: str, value: int, ref: int = None, invert: bool = False, covi
     </div>"""
 
 
-def section(title: str, content: str, anchor: str = "") -> str:
+def section(title: str, content: str, anchor: str = "", action: str = "") -> str:
     anch = f' id="{anchor}"' if anchor else ""
+    if action:
+        title_block = (
+            f'<div style="display:flex;align-items:center;justify-content:'
+            f'space-between;margin-bottom:20px">'
+            f'<h2 class="section-title" style="margin-bottom:0">{title}</h2>'
+            f'{action}</div>'
+        )
+    else:
+        title_block = f'<h2 class="section-title">{title}</h2>'
     return f"""
 <div class="section"{anch}>
-  <h2 class="section-title">{title}</h2>
+  {title_block}
   {content}
 </div>"""
 
@@ -213,6 +223,127 @@ def chart_card(html: str, cls: str = "") -> str:
 def chart_grid(charts: list, cols: int = 2) -> str:
     inner = "\n".join(chart_card(c) for c in charts)
     return f'<div class="chart-grid-{cols}">{inner}</div>'
+
+
+# ── Helpers réutilisables ──────────────────────────────────────────────────────
+
+def ghu_nav_cards_html() -> str:
+    """Grille de cartes de navigation vers les 6 GHU."""
+    cards = ""
+    for ghu in GHU_LIST:
+        slug = ghu.lower().replace(" ", "_")
+        cards += (
+            f'<a href="rapport_{slug}.html" style="display:block;background:white;'
+            f'border:1px solid #DEE2E6;border-radius:10px;padding:20px;'
+            f'text-decoration:none;color:#1A1A2E;box-shadow:0 1px 3px rgba(0,0,0,.06);'
+            f'transition:box-shadow .2s,transform .2s" '
+            f'onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.12)\';this.style.transform=\'translateY(-2px)\'" '
+            f'onmouseout="this.style.boxShadow=\'0 1px 3px rgba(0,0,0,.06)\';this.style.transform=\'none\'">'
+            f'<div style="font-weight:700;font-size:1rem;margin-bottom:4px">{ghu}</div>'
+            f'<div style="font-size:.8rem;color:#6C757D">Rapport individuel →</div></a>'
+        )
+    return (
+        '<div style="display:grid;grid-template-columns:'
+        'repeat(auto-fit,minmax(180px,1fr));gap:16px">'
+        + cards + "</div>"
+    )
+
+
+def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_organe_") -> str:
+    """Liens vers rapports organe, regroupés par appareil."""
+    appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
+    html = ""
+    for app in appareils:
+        app_slug = slugify(app)
+        orgs = sorted(
+            aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app) & (aphp.organe != "TOTAL")]
+            .organe.unique()
+        )
+        if not orgs:
+            continue
+        html += (
+            f'<div style="margin-bottom:14px">'
+            f'<a href="rapport_appareil_{app_slug}.html" style="font-weight:700;'
+            f'color:#003189;font-size:.9rem;text-decoration:none">{app} →</a><br>'
+        )
+        for org in orgs:
+            org_slug = slugify(org)
+            html += (
+                f'<a href="{anchor_prefix}{org_slug}.html" style="display:inline-block;'
+                f'margin:2px 6px;color:#457B9D;font-size:.82rem">{org} →</a>'
+            )
+        html += "</div>"
+    return html
+
+
+def survival_delay_table(
+    surv_df: pd.DataFrame,
+    aphp_df: pd.DataFrame,
+    entity: str,
+    years: list = None,
+) -> str:
+    """Table HTML : lignes = appareils, colonnes = années, valeurs = survie5ans + délai."""
+    if years is None:
+        years = sorted(aphp_df["annee"].unique())
+
+    appareils = sorted(aphp_df[aphp_df.appareil != "TOTAL"].appareil.unique())
+    n = len(years)
+
+    head = (
+        "<tr>"
+        f'<th rowspan="2" style="text-align:left;min-width:190px;padding:8px">Appareil</th>'
+        f'<th colspan="{n}" style="background:#E8F4F8;padding:6px">Survie à 5 ans (%)</th>'
+        f'<th colspan="{n}" style="background:#FFF3E0;padding:6px">Délai médian (j)</th>'
+        "</tr><tr>"
+        + "".join(f'<th style="background:#E8F4F8;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "".join(f'<th style="background:#FFF3E0;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "</tr>"
+    )
+
+    body = ""
+    for app in appareils:
+        surv_cells = ""
+        delay_cells = ""
+        for yr in years:
+            # Survie pondérée (hors "Non précisé")
+            s = surv_df[
+                (surv_df.entite == entity) & (surv_df.appareil == app)
+                & (surv_df.organe == "TOTAL") & (surv_df.annee == yr)
+                & (surv_df.stade != "Non précisé")
+            ]
+            if not s.empty:
+                w = (s.survie_5ans * s.nb_patients_stade).sum() / s.nb_patients_stade.sum()
+                bg = "#d4edda" if w >= 80 else ("#fff3cd" if w >= 50 else "#f8d7da")
+                surv_cells += f'<td style="text-align:center;background:{bg};padding:5px 6px">{w:.0f}%</td>'
+            else:
+                surv_cells += '<td style="text-align:center">—</td>'
+
+            # Délai
+            d = aphp_df[
+                (aphp_df.entite == entity) & (aphp_df.appareil == app)
+                & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)
+            ]
+            if not d.empty and pd.notna(d.iloc[0].get("delai_global_median")):
+                delay_cells += f'<td style="text-align:center;padding:5px 6px">{int(d.iloc[0]["delai_global_median"])}j</td>'
+            else:
+                delay_cells += '<td style="text-align:center">—</td>'
+
+        short = app[:40]
+        body += f'<tr><td style="font-size:.82rem;padding:6px 8px">{short}</td>{surv_cells}{delay_cells}</tr>'
+
+    return (
+        '<div style="overflow-x:auto">'
+        '<table style="border-collapse:collapse;width:100%;font-size:.83rem;border:1px solid #DEE2E6">'
+        f'<thead style="background:#F8F9FA">{head}</thead>'
+        f'<tbody>{body}</tbody>'
+        "</table></div>"
+        '<p style="font-size:.78rem;color:#6C757D;margin-top:8px">'
+        'Survie à 5 ans pondérée par la distribution des stades. '
+        '<span style="background:#d4edda;padding:2px 5px;border-radius:3px">≥ 80 %</span> '
+        '<span style="background:#fff3cd;padding:2px 5px;border-radius:3px">50–79 %</span> '
+        '<span style="background:#f8d7da;padding:2px 5px;border-radius:3px">< 50 %</span>'
+        "</p>"
+    )
 
 
 # ── Loaders ────────────────────────────────────────────────────────────────────
@@ -300,6 +431,9 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     # ── Assembly HTML ──
     content = ""
 
+    # GHU nav en haut
+    content += section("Groupes Hospitaliers Universitaires", ghu_nav_cards_html(), "ghu-nav")
+
     content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
 
     content += section("Évolution globale du nombre de patients", f"""
@@ -321,9 +455,13 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "ghu")
 
-    content += section("Analyse par appareil pathologique", f"""
+    organes_link = (
+        '<a href="index.html#nav-organes" style="font-size:.82rem;color:#457B9D;'
+        'text-decoration:none;white-space:nowrap">→ Voir les organes</a>'
+    )
+    content += section("Analyse par appareil", f"""
         {chart_card(fig_to_html(fig_heat), "full")}
-    """, "appareils")
+    """, "appareils", action=organes_link)
 
     content += section("Contexte régional", f"""
         <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
@@ -336,20 +474,18 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "regional")
 
-    # Survie SEIN (référence)
-    fig_surv_sein = survival_by_stage(surv, "AP-HP", "SEIN", year=last_year)
-    content += section("Survie — SEIN (référence AP-HP)", f"""
-        {chart_card(fig_to_html(fig_surv_sein))}
-    """, "survie")
+    # Survie et délais — tableau par appareil
+    surv_table = survival_delay_table(surv, aphp, "AP-HP")
+    content += section("Survie et délais de prise en charge — par appareil", surv_table, "survie")
 
     nav = "\n".join([
-        '<a href="index.html">Accueil</a>',
+        '<a href="index.html">← Dashboard</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution globale</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
         '<a href="#appareils">Par appareil</a>',
         '<a href="#regional">Contexte régional</a>',
-        '<a href="#survie">Survie</a>',
+        '<a href="#survie">Survie & Délais</a>',
     ])
 
     html = HTML_TEMPLATE.format(
@@ -426,12 +562,12 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     fig_delay = delay_evolution(aphp, ghu_name, "SEIN")
 
     nav = "\n".join([
-        '<a href="rapport_global_aphp.html">← AP-HP Global</a>',
+        '<a href="index.html">← Dashboard</a>',
+        '<a href="rapport_global_aphp.html">AP-HP Global</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution</a>',
-        '<a href="#sejours">Séjours</a>',
         '<a href="#appareils">Par appareil</a>',
-        '<a href="#survie">Survie</a>',
+        '<a href="#survie">Survie & Délais</a>',
     ])
 
     content = ""
@@ -446,14 +582,16 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
           {chart_card(fig_to_html(fig_sejours))}
         </div>
     """, "evolution")
-    content += section("Analyse par appareil pathologique",
-                       chart_card(fig_to_html(fig_heat), "full"), "appareils")
-    content += section("Survie et délais — SEIN (exemple)", f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_surv))}
-          {chart_card(fig_to_html(fig_delay))}
-        </div>
-    """, "survie")
+    organes_link = (
+        '<a href="index.html#nav-organes" style="font-size:.82rem;color:#457B9D;'
+        'text-decoration:none;white-space:nowrap">→ Voir les organes</a>'
+    )
+    content += section("Analyse par appareil",
+                       chart_card(fig_to_html(fig_heat), "full"), "appareils",
+                       action=organes_link)
+    surv_table = survival_delay_table(surv, aphp, ghu_name)
+    content += section("Survie et délais de prise en charge — par appareil",
+                       surv_table, "survie")
 
     html = HTML_TEMPLATE.format(
         title=f"Rapport d'activité — {ghu_name}",
@@ -572,12 +710,31 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
           {chart_card(fig_to_html(fig_reg))}
         </div>
     """, "evolution")
+    # Liens organes pour cet appareil
+    app_slug_local = slugify(appareil)
+    orgs_of_app = sorted(
+        aphp[(aphp.entite == "AP-HP") & (aphp.appareil == appareil) & (aphp.organe != "TOTAL")]
+        .organe.unique()
+    )
+    org_links_html = ""
+    for org in orgs_of_app:
+        org_slug = slugify(org)
+        suffix = f"_{slugify(entity)}" if entity != "AP-HP" else ""
+        org_links_html += (
+            f'<a href="rapport_organe_{org_slug}{suffix}.html" style="display:inline-block;'
+            f'margin:3px 8px;color:#457B9D;font-size:.85rem">{org} →</a>'
+        )
+    organes_action = (
+        '<a href="index.html#nav-organes" style="font-size:.82rem;color:#457B9D;'
+        'text-decoration:none;white-space:nowrap">→ Tous les organes</a>'
+    )
     content += section("Analyse par organe", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_heat_org))}
           {chart_card(fig_to_html(fig_tree))}
         </div>
-    """, "organes")
+        {f'<div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px"><strong style="color:#003189">Organes — {appareil} :</strong><br>{org_links_html}</div>' if org_links_html else ''}
+    """, "organes", action=organes_action)
     content += section("Survie par stade", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_surv))}
@@ -745,10 +902,12 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
 
 def build_index(data_dir: Path, output_dir: Path) -> Path:
     aphp = load_aphp(data_dir)
-    last_year = aphp.annee.max()
+    reg  = load_regional(data_dir)
+    last_year = int(aphp.annee.max())
     lv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == last_year)].iloc[0]
     pv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == last_year - 1)].iloc[0]
 
+    # ── KPI ──
     kpis_html = '<div class="kpi-grid">'
     kpis_html += kpi_card(f"Patients AP-HP {last_year}", lv.nb_patients, pv.nb_patients)
     kpis_html += kpi_card("Nouveaux patients", lv.nb_nouveaux_patients, pv.nb_nouveaux_patients)
@@ -756,60 +915,80 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
     kpis_html += kpi_card("Séjours chimiothérapie", lv.nb_sejours_chimiotherapie, pv.nb_sejours_chimiotherapie)
     kpis_html += "</div>"
 
-    # Liens GHU
-    ghu_cards = ""
-    for ghu in GHU_LIST:
-        slug = ghu.lower().replace(" ", "_")
-        ghu_cards += f"""
-        <a href="rapport_{slug}.html" style="
-            display:block; background:white; border:1px solid #DEE2E6;
-            border-radius:10px; padding:20px; text-decoration:none; color:#1A1A2E;
-            box-shadow: 0 1px 3px rgba(0,0,0,.06);
-            transition: box-shadow 0.2s, transform 0.2s;
-        " onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,.12)';this.style.transform='translateY(-2px)'"
-           onmouseout="this.style.boxShadow='0 1px 3px rgba(0,0,0,.06)';this.style.transform='none'">
-            <div style="font-weight:700;font-size:1rem;margin-bottom:4px">{ghu}</div>
-            <div style="font-size:.8rem;color:#6C757D">Rapport individuel →</div>
-        </a>"""
+    btn_global = (
+        '<a href="rapport_global_aphp.html" style="display:inline-block;background:#003189;'
+        'color:white;padding:9px 22px;border-radius:7px;text-decoration:none;'
+        'font-weight:600;font-size:.88rem;white-space:nowrap">Rapport complet AP-HP →</a>'
+    )
 
-    appareils = sorted(aphp[(aphp.appareil != "TOTAL")].appareil.unique())
+    # ── Graphiques ──
+    fig_bar = bar_appareils_years(aphp)
+    reg_total = reg[reg.appareil == "TOTAL"]
+    fig_reg   = regional_comparison(reg_total, "nb_patients",
+                                    "Parts de marché régionales — patients")
+
+    # ── Liens de navigation ──
+    appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
+    ghu_links = " &nbsp;|&nbsp; ".join(
+        f'<a href="rapport_{g.lower().replace(" ","_")}.html" style="color:#003189">{g}</a>'
+        for g in GHU_LIST
+    )
     app_links = ""
     for app in appareils:
         app_slug = slugify(app)
-        app_links += f'<a href="rapport_appareil_{app_slug}.html" style="display:inline-block;margin:4px 8px;color:#003189;font-size:.9rem">{app} →</a><br>'
+        app_links += (
+            f'<a href="rapport_appareil_{app_slug}.html" style="display:inline-block;'
+            f'margin:3px 8px;color:#003189;font-size:.88rem">{app} →</a><br>'
+        )
+    organe_links = organe_nav_links_html(aphp)
 
-    # Organe links grouped by appareil
-    organe_links = ""
-    for app in appareils:
-        app_slug = slugify(app)
-        orgs = sorted(aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app) & (aphp.organe != "TOTAL")].organe.unique())
-        if orgs:
-            organe_links += f'<div style="margin-bottom:12px"><strong style="color:#003189">{app}</strong><br>'
-            for org in orgs:
-                org_slug = slugify(org)
-                organe_links += f'<a href="rapport_organe_{org_slug}.html" style="display:inline-block;margin:2px 6px;color:#457B9D;font-size:.85rem">{org} →</a>'
-            organe_links += '</div>'
+    # ── Assemblage ──
+    content = ""
 
-    content = section("Indicateurs AP-HP " + str(last_year), kpis_html, "kpis")
-    content += section("Rapports par Groupe Hospitalier Universitaire", f"""
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
-          {ghu_cards}
+    # 1. GHU en haut (navigation)
+    content += section(
+        "Groupes Hospitaliers Universitaires",
+        ghu_nav_cards_html(),
+        "ghu",
+    )
+
+    # 2. KPI + bouton inline
+    content += section(
+        f"Indicateurs AP-HP {last_year}",
+        kpis_html,
+        "kpis",
+        action=btn_global,
+    )
+
+    # 3. Deux graphiques pleine largeur
+    content += section("Activité par appareil et contexte régional", f"""
+        {chart_card(fig_to_html(fig_bar), "full")}
+        <div style="margin-top:20px">
+          {chart_card(fig_to_html(fig_reg), "full")}
         </div>
-    """, "ghu")
-    content += section("Rapports par appareil pathologique", app_links, "appareils")
-    content += section("Rapports par organe", organe_links, "organes")
-    content += section("Rapport global AP-HP", f"""
-        <a href="rapport_global_aphp.html" style="
-            display:inline-block; background:#003189; color:white;
-            padding:12px 28px; border-radius:8px; text-decoration:none;
-            font-weight:600; font-size:1rem;
-        ">Voir le rapport complet AP-HP →</a>
-    """)
+    """, "charts")
+
+    # 4. Navigation liens simples
+    content += section("Rapport global AP-HP",
+        '<a href="rapport_global_aphp.html" style="color:#003189;font-size:.92rem">Rapport global AP-HP →</a>',
+        "nav-global")
+    content += section("Rapports par Groupe Hospitalier Universitaire",
+        f'<div style="line-height:2">{ghu_links}</div>', "nav-ghu")
+    content += section("Rapports par appareil", app_links, "nav-appareils")
+    content += section("Rapports par organe", organe_links, "nav-organes")
+
+    nav = "\n".join([
+        '<a href="#ghu">Par GHU</a>',
+        '<a href="#kpis">Indicateurs</a>',
+        '<a href="#charts">Graphiques</a>',
+        '<a href="#nav-appareils">Appareils</a>',
+        '<a href="#nav-organes">Organes</a>',
+    ])
 
     html = HTML_TEMPLATE.format(
-        title="Rapport d'activité cancérologie — AP-HP",
+        title="Dashboard — Cancérologie AP-HP",
         subtitle="Tableau de bord · Indicateurs OECI · 2019–2023",
-        nav_links='<a href="rapport_global_aphp.html">Rapport global AP-HP</a>',
+        nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
     )

@@ -387,6 +387,62 @@ def regional_comparison(
     return fig
 
 
+# ── Comparaison appareils entre deux années ───────────────────────────────────
+
+def bar_appareils_years(
+    df: pd.DataFrame,
+    entity: str = "AP-HP",
+    years: list = None,
+    value_col: str = "nb_patients",
+) -> go.Figure:
+    """Barres horizontales groupées : patients par appareil pour 2 années."""
+    if years is None:
+        years = [int(df["annee"].min()), int(df["annee"].max())]
+
+    d = df[
+        (df["entite"] == entity)
+        & (df["organe"] == "TOTAL")
+        & (df["appareil"] != "TOTAL")
+        & (df["annee"].isin(years))
+    ].copy()
+
+    last_y = max(years)
+    order = (
+        d[d["annee"] == last_y]
+        .sort_values(value_col, ascending=True)["appareil"]
+        .tolist()
+    )
+    short = {a: (a[:32] + "…" if len(a) > 32 else a) for a in order}
+
+    palette = ["#A8DADC", "#003189"]
+    fig = go.Figure()
+    for i, yr in enumerate(sorted(years)):
+        dy = d[d["annee"] == yr].set_index("appareil").reindex(order).reset_index()
+        fig.add_trace(go.Bar(
+            y=[short[a] for a in dy["appareil"]],
+            x=dy[value_col],
+            name=str(yr),
+            orientation="h",
+            marker_color=palette[i % len(palette)],
+            hovertemplate=f"<b>%{{y}}</b><br>{yr} : %{{x:,.0f}}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        title=dict(text=f"Patients par appareil — {years[0]} vs {years[-1]}", font_size=17),
+        xaxis_title="Patients",
+        barmode="group",
+        height=max(420, 48 * len(order) + 120),
+        margin=dict(t=70, b=50, l=290, r=30),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font=dict(family="Inter, Arial, sans-serif"),
+        legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#DEE2E6", borderwidth=1),
+        xaxis=dict(showgrid=True, gridcolor="#F0F0F0"),
+        yaxis=dict(tickfont_size=11),
+    )
+    return fig
+
+
 # ── Export HTML ────────────────────────────────────────────────────────────────
 
 def fig_to_html(fig: go.Figure, full: bool = False) -> str:
