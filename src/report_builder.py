@@ -947,11 +947,6 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
     )
 
     # ── Liens de navigation ──
-    appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
-    ghu_links = " &nbsp;|&nbsp; ".join(
-        f'<a href="rapport_{g.lower().replace(" ","_")}.html" style="color:#003189">{g}</a>'
-        for g in GHU_LIST
-    )
     organe_links = organe_nav_links_html(aphp)
 
     # ── Assemblage ──
@@ -973,11 +968,6 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
     )
 
     # 3. Navigation liens simples
-    content += section("Rapport global AP-HP",
-        '<a href="rapport_global_aphp.html" style="color:#003189;font-size:.92rem">Rapport global AP-HP →</a>',
-        "nav-global")
-    content += section("Rapports par Groupe Hospitalier Universitaire",
-        f'<div style="line-height:2">{ghu_links}</div>', "nav-ghu")
     content += section("Rapports par appareil / organe", organe_links, "nav-organes")
 
     nav = "\n".join([
