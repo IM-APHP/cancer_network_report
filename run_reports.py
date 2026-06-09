@@ -25,6 +25,7 @@ from report_builder import (
     build_rapport_appareil,
     build_rapport_organe,
     load_aphp, load_regional, load_survival,
+    set_fake_data,
 )
 from chart_utils import slugify
 
@@ -114,12 +115,17 @@ def build_all_reports():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-only", action="store_true")
-    parser.add_argument("--no-data",   action="store_true")
-    parser.add_argument("--ghu",       type=str)
-    parser.add_argument("--appareil",  type=str)
-    parser.add_argument("--organe",    type=str)
+    parser.add_argument("--data-only",  action="store_true")
+    parser.add_argument("--no-data",    action="store_true")
+    parser.add_argument("--real-data",  action="store_true",
+                        help="Données réelles : supprime les avertissements 'données fictives'")
+    parser.add_argument("--ghu",        type=str)
+    parser.add_argument("--appareil",   type=str)
+    parser.add_argument("--organe",     type=str)
     args = parser.parse_args()
+
+    if args.real_data:
+        set_fake_data(False)
 
     if not args.no_data:
         generate_data()

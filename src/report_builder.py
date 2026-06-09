@@ -8,6 +8,15 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
+# ── Mode données ───────────────────────────────────────────────────────────────
+FAKE_DATA: bool = True  # False = données réelles, supprime les avertissements
+
+
+def set_fake_data(value: bool) -> None:
+    global FAKE_DATA
+    FAKE_DATA = value
+
+
 from chart_utils import (
     line_evolution, bar_comparison, stacked_treatments,
     donut_market_share, heatmap_appareils, waterfall_trends,
@@ -138,17 +147,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <h1>{title}</h1>
     <div class="subtitle">{subtitle}</div>
   </div>
-  <div class="badge">Données fictives — 2019–2023</div>
+  {fake_badge}
 </header>
 
 <nav class="report-nav">
 {nav_links}
 </nav>
 
-<div class="fake-data-banner">
-  ⚠ <strong>DONNÉES FICTIVES</strong> — Ce rapport est généré à partir de données entièrement simulées à titre illustratif.
-  Les chiffres présentés ne reflètent pas la réalité clinique et ne doivent pas être utilisés à des fins médicales, administratives ou décisionnelles.
-</div>
+{fake_banner}
 
 <main class="report-content">
 {content}
@@ -162,6 +168,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+def _render_page(year_range: str, **kwargs) -> str:
+    """Wrapper autour de HTML_TEMPLATE.format() qui injecte les variables fake_data."""
+    if FAKE_DATA:
+        badge = f'<div class="badge">Données fictives — {year_range}</div>'
+        banner = (
+            '<div class="fake-data-banner">'
+            '⚠ <strong>DONNÉES FICTIVES</strong> — Ce rapport est généré à partir de données'
+            ' entièrement simulées à titre illustratif.'
+            ' Les chiffres présentés ne reflètent pas la réalité clinique et ne doivent pas'
+            ' être utilisés à des fins médicales, administratives ou décisionnelles.'
+            '</div>'
+        )
+    else:
+        badge = ""
+        banner = ""
+    return HTML_TEMPLATE.format(year_range=year_range, fake_badge=badge, fake_banner=banner, **kwargs)
 
 
 def fmt_nb(n: int) -> str:
@@ -348,16 +372,96 @@ def survival_delay_table(
 
 # ── Loaders ────────────────────────────────────────────────────────────────────
 
+def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcule les lignes organe=TOTAL manquantes par (entite, annee, appareil)."""
+    num_cols = [
+        "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+        "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
+    ]
+    delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
+                               "delai_chimio_median", "delai_radio_median"] if c in df.columns]
+    rows_to_add = []
+    for (entite, annee, appareil), grp in df[df["appareil"] != "TOTAL"].groupby(
+        ["entite", "annee", "appareil"]
+    ):
+        if "TOTAL" in grp["organe"].values:
+            continue  # déjà présent
+        row = {"entite": entite, "annee": annee, "appareil": appareil, "organe": "TOTAL"}
+        for c in num_cols:
+            if c in grp.columns:
+                row[c] = grp[c].sum()
+        for c in delay_cols:
+            if c in grp.columns:
+                row[c] = grp[c].mean()
+        rows_to_add.append(row)
+    if rows_to_add:
+        df = pd.concat([df, pd.DataFrame(rows_to_add)], ignore_index=True)
+    return df
+
+
+def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcule les lignes appareil=TOTAL manquantes en agrégeant organe=TOTAL."""
+    if "TOTAL" in df["appareil"].values:
+        return df
+    num_cols = [
+        "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+        "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
+    ]
+    delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
+                               "delai_chimio_median", "delai_radio_median"] if c in df.columns]
+    org_total = df[df["organe"] == "TOTAL"]
+    agg = org_total.groupby(["entite", "annee"])[num_cols].sum().reset_index()
+    if delay_cols:
+        agg_d = org_total.groupby(["entite", "annee"])[delay_cols].mean().reset_index()
+        agg = agg.merge(agg_d, on=["entite", "annee"])
+    agg["appareil"] = "TOTAL"
+    agg["organe"] = "TOTAL"
+    return pd.concat([df, agg], ignore_index=True)
+
+
+# Mapping des noms d'appareils régionaux → noms AP-HP
+_APPAREIL_MAP = {
+    "OS-TISSUS MOUS":  "OS / TISSUS MOUS",
+    "OEIL":            "ŒIL",
+    "Total Appareil":  "TOTAL",
+}
+
+# Mapping des types d'établissements régionaux → libellés affichés
+_ETAB_MAP = {
+    "APHP":      "AP-HP",
+    "Cliniques": "Clinique",
+    "ESPIC":     "PSPH",
+    "CLCC":      "CLCC",
+    "CH":        "CH",
+}
+
+
 def load_aphp(data_dir: Path) -> pd.DataFrame:
-    return pd.read_csv(data_dir / "aphp_data.csv")
+    df = pd.read_csv(data_dir / "aphp_data.csv")
+    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    df = _add_organe_total(df)
+    df = _add_appareil_total(df)
+    return df
 
 
 def load_regional(data_dir: Path) -> pd.DataFrame:
-    return pd.read_csv(data_dir / "regional_data.csv")
+    df = pd.read_csv(data_dir / "regional_data.csv")
+    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    # Renommage colonne entite
+    if "entite" not in df.columns and "type_etab" in df.columns:
+        df = df.rename(columns={"type_etab": "entite"})
+    # Normalisation des valeurs
+    df["entite"]   = df["entite"].replace(_ETAB_MAP)
+    df["appareil"] = df["appareil"].replace(_APPAREIL_MAP)
+    if "organe" in df.columns:
+        df["organe"] = df["organe"].replace({"Total Organe": "TOTAL"})
+    return df
 
 
 def load_survival(data_dir: Path) -> pd.DataFrame:
-    return pd.read_csv(data_dir / "survival_data.csv")
+    df = pd.read_csv(data_dir / "survival_data.csv")
+    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    return df
 
 
 # ── Rapport global AP-HP ───────────────────────────────────────────────────────
@@ -374,6 +478,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     years = sorted(aphp_total.annee.unique())
     last_year = years[-1]
     prev_year = years[-2]
+    year_range = f"{years[0]}–{years[-1]}"
 
     lv = aphp_total[aphp_total.annee == last_year].iloc[0]
     pv = aphp_total[aphp_total.annee == prev_year].iloc[0]
@@ -388,7 +493,10 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     kpis_html += kpi_card("Soins palliatifs", lv.nb_sejours_palliatifs, pv.nb_sejours_palliatifs)
     kpis_html += "</div>"
 
-    covid_note = '<div class="covid-note">⚠ L\'année 2020 est marquée par l\'impact de la pandémie COVID-19 sur l\'activité hospitalière.</div>'
+    covid_note = (
+        '<div class="covid-note">⚠ L\'année 2020 est marquée par l\'impact de la pandémie COVID-19 sur l\'activité hospitalière.</div>'
+        if 2020 in years else ""
+    )
 
     # ── Graphiques évolution globale ──
     fig_pts = line_evolution(aphp_total, "annee", "nb_patients", "entite",
@@ -405,7 +513,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     melted["label"] = melted["type_sejour"].map(TREATMENT_COLS)
     fig_sejours = line_evolution(melted, "annee", "nb_sejours", "label",
                                  "Évolution des séjours par mode de prise en charge",
-                                 entities=list(TREATMENT_COLS.values()))
+                                 entities=list(TREATMENT_COLS.values()), y_zero=True)
 
     # Waterfall
     fig_wf = waterfall_trends(aphp_total, "Variation annuelle du nombre de patients — AP-HP")
@@ -505,9 +613,9 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         '<a href="#survie">Survie & Délais</a>',
     ])
 
-    html = HTML_TEMPLATE.format(
+    html = _render_page(year_range,
         title="Rapport d'activité cancérologie — AP-HP",
-        subtitle="Vue d'ensemble · 2019–2023 · Indicateurs OECI",
+        subtitle=f"Vue d'ensemble · {year_range} · Indicateurs OECI",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
@@ -531,6 +639,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     years = sorted(ghu_total.annee.unique())
     last_year = years[-1]
     prev_year = years[-2]
+    year_range = f"{years[0]}–{years[-1]}"
 
     lv = ghu_total[ghu_total.annee == last_year].iloc[0]
     pv = ghu_total[ghu_total.annee == prev_year].iloc[0]
@@ -553,10 +662,13 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
                              f"Nouveaux patients — {ghu_name} vs AP-HP",
                              entities=[ghu_name, "AP-HP"])
 
-    # Part de marché de ce GHU
+    # Part de marché de ce GHU (alignement sur les années communes)
+    aphp_pts = aphp_total.set_index("annee")["nb_patients"]
     share_data = ghu_total.copy()
-    aphp_ref = aphp_total.copy()
-    share_data["part_marche"] = share_data["nb_patients"].values / aphp_ref["nb_patients"].values * 100
+    share_data["part_marche"] = share_data.apply(
+        lambda r: r["nb_patients"] / aphp_pts[r["annee"]] * 100
+        if r["annee"] in aphp_pts.index else None, axis=1
+    )
     fig_share = line_evolution(share_data, "annee", "part_marche", "entite",
                                f"Part de marché dans l'AP-HP — {ghu_name} (%)",
                                entities=[ghu_name])
@@ -618,9 +730,9 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie")
 
-    html = HTML_TEMPLATE.format(
+    html = _render_page(year_range,
         title=f"Rapport d'activité — {ghu_name}",
-        subtitle=f"Activité cancérologie · 2019–2023 · Indicateurs OECI",
+        subtitle=f"Activité cancérologie · {year_range} · Indicateurs OECI",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
@@ -648,12 +760,15 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     ent_app  = app_data[app_data.entite == entity]
     aphp_app = app_data[app_data.entite == "AP-HP"]
 
-    years = sorted(ent_app.annee.unique())
-    last_year = years[-1]
-    prev_year = years[-2]
-
     if ent_app.empty:
         return None
+
+    years = sorted(ent_app.annee.unique())
+    if len(years) < 2:
+        return None
+    last_year = years[-1]
+    prev_year = years[-2]
+    year_range = f"{years[0]}–{years[-1]}"
 
     lv = ent_app[ent_app.annee == last_year].iloc[0]
     pv = ent_app[ent_app.annee == prev_year].iloc[0]
@@ -776,9 +891,9 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     if entity == "AP-HP":
         content += f'<div style="margin-top:16px;padding:16px;background:#F8F9FA;border-radius:8px"><strong>Voir aussi par GHU :</strong> {ghu_links}</div>'
 
-    html = HTML_TEMPLATE.format(
+    html = _render_page(year_range,
         title=f"Rapport — {appareil}" + (f" — {entity}" if entity != "AP-HP" else ""),
-        subtitle=f"Activité cancérologie AP-HP · 2019–2023",
+        subtitle=f"Activité cancérologie AP-HP · {year_range}",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
@@ -813,8 +928,11 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         return None
 
     years = sorted(ent_org.annee.unique())
+    if len(years) < 2:
+        return None
     last_year = years[-1]
     prev_year = years[-2]
+    year_range = f"{years[0]}–{years[-1]}"
     lv = ent_org[ent_org.annee == last_year].iloc[0]
     pv = ent_org[ent_org.annee == prev_year].iloc[0]
 
@@ -906,9 +1024,9 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     if entity == "AP-HP":
         content += f'<div style="margin-top:16px;padding:16px;background:#F8F9FA;border-radius:8px"><strong>Voir aussi par GHU :</strong> {ghu_links}</div>'
 
-    html = HTML_TEMPLATE.format(
+    html = _render_page(year_range,
         title=f"Rapport — {organe}" + (f" — {entity}" if entity != "AP-HP" else ""),
-        subtitle=f"{appareil} · Activité cancérologie AP-HP · 2019–2023",
+        subtitle=f"{appareil} · Activité cancérologie AP-HP · {year_range}",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
@@ -928,9 +1046,12 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
 def build_index(data_dir: Path, output_dir: Path) -> Path:
     aphp = load_aphp(data_dir)
     reg  = load_regional(data_dir)
-    last_year = int(aphp.annee.max())
+    years_all = sorted(aphp["annee"].unique())
+    last_year = int(years_all[-1])
+    prev_year = int(years_all[-2])
+    year_range = f"{years_all[0]}–{years_all[-1]}"
     lv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == last_year)].iloc[0]
-    pv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == last_year - 1)].iloc[0]
+    pv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == prev_year)].iloc[0]
 
     # ── KPI ──
     kpis_html = '<div class="kpi-grid">'
@@ -976,9 +1097,9 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
         '<a href="#nav-organes">Appareils / Organes</a>',
     ])
 
-    html = HTML_TEMPLATE.format(
+    html = _render_page(year_range,
         title="Dashboard — Cancérologie AP-HP",
-        subtitle="Tableau de bord · Indicateurs OECI · 2019–2023",
+        subtitle=f"Tableau de bord · Indicateurs OECI · {year_range}",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),

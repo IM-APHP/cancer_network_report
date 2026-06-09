@@ -83,6 +83,7 @@ def line_evolution(
     y_label: str = "",
     entities: list = None,
     show_covid: bool = True,
+    y_zero: bool = False,
 ) -> go.Figure:
     """Courbes d'évolution temporelle pour plusieurs entités."""
     fig = go.Figure()
@@ -114,7 +115,8 @@ def line_evolution(
             ),
         ))
 
-    if show_covid:
+    years_in_data = sorted(df[x].unique())
+    if show_covid and 2020 in years_in_data:
         fig.add_vrect(
             x0=2019.5, x1=2020.5,
             fillcolor="#FFE8E8", opacity=0.5,
@@ -125,11 +127,14 @@ def line_evolution(
             annotation_font_color="#E63946",
         )
 
+    lo = _layout()
+    if y_zero:
+        lo["yaxis"] = dict(showgrid=True, gridcolor="#F0F0F0", zeroline=False, rangemode="tozero")
     fig.update_layout(
         title=dict(text=title, font_size=17),
         xaxis_title="Année",
         yaxis_title=y_label,
-        **_layout(),
+        **lo,
     )
     return fig
 
@@ -364,10 +369,13 @@ def regional_comparison(
 ) -> go.Figure:
     """Comparaison AP-HP vs autres types d'établissements régionaux."""
     fig = go.Figure()
-    types = sorted(df_reg["type_etab"].unique())
+    etab_col = "entite" if "entite" in df_reg.columns else "type_etab"
+    # Agrégation au cas où plusieurs lignes par (entite, annee)
+    df_reg = df_reg.groupby([etab_col, "annee"], as_index=False)[y_col].sum()
+    types = sorted(df_reg[etab_col].unique())
 
     for t in types:
-        d = df_reg[df_reg["type_etab"] == t].sort_values("annee")
+        d = df_reg[df_reg[etab_col] == t].sort_values("annee")
         width = 3 if t == highlight else 1.8
         dash = "solid" if t == highlight else "dot"
         fig.add_trace(go.Scatter(
@@ -699,15 +707,16 @@ def delay_evolution(
                 hovertemplate=f"<b>{label}</b><br>%{{y}} jours<extra></extra>",
             ))
 
-    fig.add_vrect(
-        x0=2019.5, x1=2020.5,
-        fillcolor="#FFE8E8", opacity=0.5,
-        line_width=0, layer="below",
-        annotation_text="COVID-19",
-        annotation_position="top left",
-        annotation_font_size=11,
-        annotation_font_color="#E63946",
-    )
+    if 2020 in d["annee"].values:
+        fig.add_vrect(
+            x0=2019.5, x1=2020.5,
+            fillcolor="#FFE8E8", opacity=0.5,
+            line_width=0, layer="below",
+            annotation_text="COVID-19",
+            annotation_position="top left",
+            annotation_font_size=11,
+            annotation_font_color="#E63946",
+        )
 
     fig.update_layout(
         title=dict(text=f"Délais médians de PEC — {appareil} — {entity}", font_size=17),
