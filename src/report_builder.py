@@ -371,6 +371,63 @@ def survival_delay_table(
     )
 
 
+# Mesures de séjours du format interne (pas de « séjours totaux » → on les somme).
+_SEJOUR_COLS = ["nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
+                "nb_sejours_radiotherapie", "nb_sejours_palliatifs"]
+
+
+def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None) -> str:
+    """Tableau chiffré par appareil (remplace la heatmap d'évolution) : lignes =
+    appareils, colonnes = années, deux blocs « Nb patients » et « Nb séjours ».
+    « Nb séjours » = somme chirurgie+chimio+radio+palliatifs (le format interne n'a
+    pas de mesure « séjours totaux »). Style aligné sur « Survie et délais »."""
+    if years is None:
+        years = sorted(aphp_df["annee"].unique())
+    appareils = sorted(aphp_df[aphp_df.appareil != "TOTAL"].appareil.unique())
+    n = len(years)
+
+    head = (
+        "<tr>"
+        f'<th rowspan="2" style="text-align:left;min-width:190px;padding:8px">Appareil</th>'
+        f'<th colspan="{n}" style="background:#E8F4F8;padding:6px">Nb patients</th>'
+        f'<th colspan="{n}" style="background:#FFF3E0;padding:6px">Nb séjours</th>'
+        "</tr><tr>"
+        + "".join(f'<th style="background:#E8F4F8;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "".join(f'<th style="background:#FFF3E0;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "</tr>"
+    )
+
+    body = ""
+    for app in appareils:
+        pat_cells = ""
+        sej_cells = ""
+        for yr in years:
+            row = aphp_df[(aphp_df.entite == entity) & (aphp_df.appareil == app)
+                          & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)]
+            if not row.empty:
+                r = row.iloc[0]
+                pat = int(r["nb_patients"])
+                sej = int(sum(int(r[c]) for c in _SEJOUR_COLS if c in row.columns))
+                pat_cells += f'<td style="text-align:center;padding:5px 6px">{fmt_nb(pat)}</td>'
+                sej_cells += f'<td style="text-align:center;padding:5px 6px">{fmt_nb(sej)}</td>'
+            else:
+                pat_cells += '<td style="text-align:center">—</td>'
+                sej_cells += '<td style="text-align:center">—</td>'
+        short = app[:40]
+        body += f'<tr><td style="font-size:.82rem;padding:6px 8px">{short}</td>{pat_cells}{sej_cells}</tr>'
+
+    return (
+        '<div style="overflow-x:auto">'
+        '<table style="border-collapse:collapse;width:100%;font-size:.83rem;border:1px solid #DEE2E6">'
+        f'<thead style="background:#F8F9FA">{head}</thead>'
+        f'<tbody>{body}</tbody>'
+        "</table></div>"
+        '<p style="font-size:.78rem;color:#6C757D;margin-top:8px">'
+        '« Nb séjours » = somme chirurgie + chimiothérapie + radiothérapie + soins palliatifs '
+        '(pas de mesure « séjours totaux » dans la source).</p>'
+    )
+
+
 # ── Loaders ────────────────────────────────────────────────────────────────────
 
 def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -527,8 +584,8 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
                                  "Patients par GHU — évolution", barmode="group",
                                  entities=GHU_LIST)
 
-    # ── Heatmap appareils ──
-    fig_heat = heatmap_appareils(aphp, "AP-HP", title="Évolution par appareil (index, moy=1) — AP-HP")
+    # ── Tableau chiffré par appareil (remplace la heatmap) ──
+    tbl_appareils = appareil_counts_table(aphp, "AP-HP")
 
     # ── Contexte régional ──
     reg_total = reg[(reg.appareil == "TOTAL")]
@@ -582,7 +639,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         )
     content += section("Analyse par appareil", f"""
         {chart_card(fig_to_html(fig_bar_app), "full")}
-        {chart_card(fig_to_html(fig_heat), "full")}
+        {chart_card(tbl_appareils, "full")}
         <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
           <strong style="color:#003189">Rapports par appareil :</strong><br>
           {app_links_global}
@@ -692,8 +749,8 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
                                  f"Séjours par mode de prise en charge — {ghu_name}",
                                  entities=list(TREATMENT_COLS.values()))
 
-    # Heatmap appareils
-    fig_heat = heatmap_appareils(aphp, ghu_name, title=f"Évolution par appareil — {ghu_name}")
+    # Tableau chiffré par appareil (remplace la heatmap)
+    tbl_appareils = appareil_counts_table(aphp, ghu_name)
 
     # Survie (stade II comme représentatif)
     fig_surv = survival_by_stage(surv, ghu_name, "SEIN", year=last_year)
@@ -729,7 +786,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
             f'margin:3px 8px;color:#457B9D;font-size:.85rem">{app} →</a>'
         )
     content += section("Analyse par appareil", f"""
-        {chart_card(fig_to_html(fig_heat), "full")}
+        {chart_card(tbl_appareils, "full")}
         <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
           <strong style="color:#003189">Rapports par appareil :</strong><br>
           {app_links_ghu}
