@@ -2,10 +2,15 @@
 run_reports.py
 Script maître — génère tous les rapports HTML en une commande.
 
+Chaîne (fictif) : templates/ → fill_fake_data → data/*.xlsx → export_internes →
+data/*.csv → report_builder → output/*.html. Auto-suffisante sur clone neuf
+(templates/ versionné, data/ recréé).
+
 Usage :
-    python run_reports.py              # Tout générer
-    python run_reports.py --data-only  # Données uniquement
-    python run_reports.py --no-data    # Ne pas régénérer les données
+    python run_reports.py              # Tout : données fictives + build
+    python run_reports.py --data-only  # Phase données uniquement (xlsx + CSV)
+    python run_reports.py --no-data    # Build uniquement, depuis les CSV existants
+    python run_reports.py --real-data  # Source = fichiers réels (pas de génération fictive)
     python run_reports.py --ghu "GHU Nord"
     python run_reports.py --appareil "SEIN"
     python run_reports.py --organe "Sein" --appareil "SEIN"
@@ -17,7 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from generate_fake_data import generate_aphp_data, generate_regional_data, generate_survival_data
+import fill_fake_data
+from export_internes import exporter_csv
 from report_builder import (
     build_index,
     build_rapport_global,
@@ -28,29 +34,25 @@ from report_builder import (
     set_fake_data,
 )
 from chart_utils import slugify
+from referentiels import GHU_LIST   # source unique
 
 DATA_DIR   = Path(__file__).parent / "data"
 OUTPUT_DIR = Path(__file__).parent / "output"
 
-GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU SUN"]
 
-
-def generate_data():
+def generate_data(fictif: bool = True):
+    """Phase données = (fictif) génération des xlsx depuis templates/ puis export
+    CSV ; (réel) export CSV directement depuis les fichiers réels. Dans les deux
+    cas, écrit les 3 CSV internes (aphp/survival/regional) dans data/."""
     DATA_DIR.mkdir(exist_ok=True)
-    print("\n[1/3] Génération des données AP-HP...")
-    df = generate_aphp_data()
-    df.to_csv(DATA_DIR / "aphp_data.csv", index=False)
-    print(f"  → {len(df):,} lignes")
-
-    print("[2/3] Génération des données régionales...")
-    df_reg = generate_regional_data()
-    df_reg.to_csv(DATA_DIR / "regional_data.csv", index=False)
-    print(f"  → {len(df_reg):,} lignes")
-
-    print("[3/3] Génération des données de survie...")
-    df_surv = generate_survival_data()
-    df_surv.to_csv(DATA_DIR / "survival_data.csv", index=False)
-    print(f"  → {len(df_surv):,} lignes")
+    if fictif:
+        print("\n[1/2] Génération des fichiers fictifs (templates/ → data/*.xlsx)...")
+        fill_fake_data.main()
+        print("\n[2/2] Export interne (xlsx fictifs → 3 CSV)...")
+        exporter_csv(dossier_data=str(DATA_DIR), fictif=True)
+    else:
+        print("\n[1/1] Export interne depuis les fichiers RÉELS (→ 3 CSV)...")
+        exporter_csv(dossier_data=str(DATA_DIR), fictif=False)
 
 
 def build_all_reports():
@@ -124,11 +126,14 @@ def main():
     parser.add_argument("--organe",     type=str)
     args = parser.parse_args()
 
+    # --real-data est ORTHOGONAL à --no-data/--data-only : il change la SOURCE
+    # (fichiers réels au lieu des fictifs) et masque les bandeaux « données fictives ».
+    fictif = not args.real_data
     if args.real_data:
         set_fake_data(False)
 
     if not args.no_data:
-        generate_data()
+        generate_data(fictif=fictif)
 
     if args.data_only:
         return

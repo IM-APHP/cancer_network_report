@@ -41,7 +41,7 @@ TREATMENT_COLS = {
     "nb_sejours_palliatifs":      "Soins palliatifs",
 }
 
-GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU SUN"]
+from referentiels import GHU_LIST   # source unique (réexporté pour report_builder)
 
 # ── Style global ───────────────────────────────────────────────────────────────
 

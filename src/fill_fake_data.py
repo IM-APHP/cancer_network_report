@@ -48,11 +48,14 @@ import openpyxl
 
 np.random.seed(42)
 
+# Entrées = gabarits Excel VIDES (format réel), versionnés dans templates/.
+# Sorties = fichiers _fictif écrits dans data/ (gitignoré, recréé sur clone neuf).
+TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "templates")
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
-OECI_IN = os.path.join(DATA, "indicateurs_oeci_2025_M12.xlsx")  # gabarit (structure de réf.)
-PAT_IN = os.path.join(DATA, "canceroBR_16-25_Pat_13032026.xlsx")
+OECI_IN = os.path.join(TEMPLATES, "indicateurs_oeci_2025_M12.xlsx")  # gabarit (structure de réf.)
+PAT_IN = os.path.join(TEMPLATES, "canceroBR_16-25_Pat_13032026.xlsx")
 PAT_OUT = os.path.join(DATA, "canceroBR_16-25_Pat_13032026_fictif.xlsx")
-SEJ_IN = os.path.join(DATA, "canceroBR_16-25_Sej_13032026.xlsx")
+SEJ_IN = os.path.join(TEMPLATES, "canceroBR_16-25_Sej_13032026.xlsx")
 SEJ_OUT = os.path.join(DATA, "canceroBR_16-25_Sej_13032026_fictif.xlsx")
 
 # Mapping Hôpital -> GHU (nom complet OECI), relevé dans l'onglet « Effectifs recherche ».
@@ -872,6 +875,7 @@ def fill_regional(path_in, path_out, gen_leaf, meas_cols, hdr):
 
 
 def main():
+    os.makedirs(DATA, exist_ok=True)   # data/ gitignoré : absent sur clone neuf
     fill_oeci()
     fill_regional(PAT_IN, PAT_OUT, gen_pat_leaf, PAT_MEAS, hdr=1)
     fill_regional(SEJ_IN, SEJ_OUT, gen_sej_leaf, SEJ_MEAS, hdr=2)

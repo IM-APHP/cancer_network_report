@@ -27,16 +27,9 @@ import pandas as pd
 import openpyxl
 
 # ───────────────────────── correspondances à figer ─────────────────────────
-# Nom complet GHU (tel qu'écrit dans la colonne GHU des fichiers OECI) → code interne.
-GHU_NOM2CODE = {
-    "APHP.Centre-Université de Paris": "GHU Centre",
-    "APHP.Nord-Université de Paris": "GHU Nord",
-    "APHP.Hôpitaux Universitaires Henri-Mondor": "GHU Mondor",
-    "APHP.Hôpitaux Universitaires Paris-Seine-Saint-Denis": "GHU PSSD",
-    "APHP.Sorbonne Université": "GHU SUN",        # SUN = Sorbonne
-    "APHP.Université Paris Saclay": "GHU PSL",     # PSL = Paris Saclay
-}
-ENTITES_APHP = {"AP-HP", "GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU SUN"}
+from referentiels import GHU_LIST, GHU_NOM2CODE   # source unique
+
+ENTITES_APHP = {"AP-HP", *GHU_LIST}
 
 # Table de correspondance EXPLICITE Niveau → (niveau d'agrégation, granularité).
 # Énumérée à partir des valeurs réellement présentes dans les onglets fictifs ;
@@ -336,7 +329,12 @@ def charger_oeci(dossier="data", fictif=True):
             f"(motif indicateurs_oeci_AAAA_MMM{'_fictif' if fictif else ''}.xlsx).")
     df_aphp = _assembler_aphp(fichiers)
     df_survie = pd.concat([_frame_survie(p, a) for a, p in fichiers], ignore_index=True)
-    df_survie = df_survie[COLS_SURVIE].reset_index(drop=True)
+    # Onglet « Survie globale » parfois livré ENTIÈREMENT vide (gabarit réel) → df sans
+    # colonnes : on renvoie un cadre vide AU BON SCHÉMA plutôt que de lever KeyError.
+    if df_survie.empty:
+        df_survie = pd.DataFrame(columns=COLS_SURVIE)
+    else:
+        df_survie = df_survie[COLS_SURVIE].reset_index(drop=True)
     return df_aphp, df_survie
 
 

@@ -28,6 +28,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from pivot_loader import charger_oeci          # noqa: E402
 from regional_loader import charger_regional   # noqa: E402
 
+# Gabarits réels (format réel, vides pour l'instant) : versionnés dans templates/.
+TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "templates")
+
 
 def _survie_niveau_appareil(df_survie):
     """Reconstruit les lignes de survie au niveau APPAREIL (organe='TOTAL') par
@@ -51,10 +54,16 @@ def _survie_niveau_appareil(df_survie):
     return pd.concat([df_survie, g], ignore_index=True)
 
 
-def exporter_csv(dossier_data="data", fictif=True):
-    print(f"Export interne (fictif={fictif}) → {dossier_data}/")
-    df_aphp, df_survie = charger_oeci(dossier_data, fictif=fictif)
-    df_regional = charger_regional(dossier_data, fictif=fictif)
+def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
+    """Lit les xlsx (fictif → ``data/*_fictif.xlsx`` ; réel → gabarits ``templates/``)
+    et écrit les 3 CSV internes dans ``dossier_data``. ``dossier_source`` force le
+    répertoire des xlsx sources (défaut : data/ en fictif, templates/ en réel)."""
+    if dossier_source is None:
+        dossier_source = dossier_data if fictif else TEMPLATES
+    os.makedirs(dossier_data, exist_ok=True)
+    print(f"Export interne (fictif={fictif}) : source {dossier_source}/ → {dossier_data}/")
+    df_aphp, df_survie = charger_oeci(dossier_source, fictif=fictif)
+    df_regional = charger_regional(dossier_source, fictif=fictif)
 
     df_survie = _survie_niveau_appareil(df_survie)
 

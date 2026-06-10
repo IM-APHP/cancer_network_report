@@ -1,6 +1,8 @@
-# Données générées (recréées par la CI)
+# Données générées (recréées par la CI à partir de templates/)
 data/
 output/
+# NB : templates/ (gabarits Excel vides, format réel) est VERSIONNÉ — ne pas ignorer.
+# Il permet de reconstituer toute la série fictive sur un clone neuf.
 
 # Python
 __pycache__/
@@ -16,3 +18,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# Claude Code (local)
+.claude/
