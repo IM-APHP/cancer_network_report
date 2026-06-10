@@ -575,15 +575,20 @@ def survival_by_stage(
     appareil: str,
     organe: str = "TOTAL",
     year: int = None,
+    population: str = "tous",
 ) -> go.Figure:
-    """Graphique en barres groupées : survie à 1 an et 5 ans par stade."""
+    """Graphique en barres groupées : survie à 1 an et 5 ans par stade (I-III, IV).
+
+    ``population`` ∈ {tous, nouveaux} : on filtre IMPÉRATIVEMENT une population
+    (le schéma long contient les deux), sinon chaque stade apparaît en double."""
     d = df_surv[
         (df_surv["entite"] == entity)
         & (df_surv["appareil"] == appareil)
         & (df_surv["organe"] == organe)
+        & (df_surv["population"] == population)
     ].copy()
 
-    if year is None:
+    if year is None and not d.empty:
         year = int(d["annee"].max())
     d = d[d["annee"] == year]
 
@@ -593,8 +598,7 @@ def survival_by_stage(
                            x=0.5, y=0.5, showarrow=False)
         return fig
 
-    # Exclure "Non précisé" pour la lisibilité principale
-    d = d[d["stade"] != "Non précisé"]
+    d = d.sort_values("stade")   # stades I-III / IV (plus de « Non précisé »)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -627,14 +631,19 @@ def survival_evolution(
     entity: str,
     appareil: str,
     organe: str = "TOTAL",
-    stade: str = "II",
+    stade: str = "I-III",
+    population: str = "tous",
 ) -> go.Figure:
-    """Évolution de la survie au fil des années pour un stade donné."""
+    """Évolution de la survie au fil des années pour un stade donné (défaut I-III).
+
+    ``population`` ∈ {tous, nouveaux} : filtrée impérativement (sinon deux points
+    par année — tous + nouveaux — sur chaque courbe)."""
     d = df_surv[
         (df_surv["entite"] == entity)
         & (df_surv["appareil"] == appareil)
         & (df_surv["organe"] == organe)
         & (df_surv["stade"] == stade)
+        & (df_surv["population"] == population)
     ].sort_values("annee")
 
     fig = go.Figure()

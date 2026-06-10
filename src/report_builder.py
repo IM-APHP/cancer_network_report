@@ -329,11 +329,12 @@ def survival_delay_table(
         surv_cells = ""
         delay_cells = ""
         for yr in years:
-            # Survie pondérée (hors "Non précisé")
+            # Survie à 5 ans pondérée par les stades — filtrer UNE population
+            # (sinon le poids nb_patients_stade est compté deux fois : tous + nouveaux).
             s = surv_df[
                 (surv_df.entite == entity) & (surv_df.appareil == app)
                 & (surv_df.organe == "TOTAL") & (surv_df.annee == yr)
-                & (surv_df.stade != "Non précisé")
+                & (surv_df.population == "tous")
             ]
             if not s.empty:
                 w = (s.survie_5ans * s.nb_patients_stade).sum() / s.nb_patients_stade.sum()
@@ -809,7 +810,7 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
 
     # Survie
     fig_surv = survival_by_stage(surv, entity, appareil, year=last_year)
-    fig_surv_evo = survival_evolution(surv, entity, appareil, stade="II")
+    fig_surv_evo = survival_evolution(surv, entity, appareil, stade="I-III")
 
     # Délais
     fig_delay = delay_evolution(aphp, entity, appareil)
@@ -967,10 +968,10 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     surv_org = surv[(surv.organe == organe) & (surv.appareil == appareil)] if surv is not None else pd.DataFrame()
     if not surv_org.empty:
         fig_surv = survival_by_stage(surv, entity, appareil, organe=organe, year=last_year)
-        fig_surv_evo = survival_evolution(surv, entity, appareil, organe=organe, stade="II")
+        fig_surv_evo = survival_evolution(surv, entity, appareil, organe=organe, stade="I-III")
     else:
         fig_surv = survival_by_stage(surv, entity, appareil, year=last_year)
-        fig_surv_evo = survival_evolution(surv, entity, appareil, stade="II")
+        fig_surv_evo = survival_evolution(surv, entity, appareil, stade="I-III")
 
     # Délais
     fig_delay = delay_evolution(aphp, entity, appareil, organe=organe)
