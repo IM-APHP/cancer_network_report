@@ -22,7 +22,7 @@ from chart_utils import (
     donut_market_share, heatmap_appareils, waterfall_trends,
     kpi_indicators, regional_comparison, fig_to_html,
     heatmap_organes, treemap_organes,
-    survival_by_stage, survival_evolution,
+    survival_by_stage, survival_evolution, survival_hospital_comparison,
     delay_evolution, delay_comparison_bar,
     bar_appareils_years,
     slugify,
@@ -602,7 +602,14 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
 
     # Survie et délais — tableau par appareil
     surv_table = survival_delay_table(surv, aphp, "AP-HP")
-    content += section("Survie et délais de prise en charge — par appareil", surv_table, "survie")
+    lien_cmp = (
+        '<a href="rapport_comparaison_hopitaux.html" style="display:inline-block;'
+        'background:#003189;color:white;padding:8px 18px;border-radius:7px;'
+        'text-decoration:none;font-weight:600;font-size:.85rem;white-space:nowrap">'
+        'Comparaison inter-hôpitaux →</a>'
+    )
+    content += section("Survie et délais de prise en charge — par appareil",
+                       surv_table, "survie", action=lien_cmp)
 
     nav = "\n".join([
         '<a href="index.html">← Dashboard</a>',
@@ -612,6 +619,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         '<a href="#appareils">Par appareil</a>',
         '<a href="#regional">Contexte régional</a>',
         '<a href="#survie">Survie & Délais</a>',
+        '<a href="rapport_comparaison_hopitaux.html">Inter-hôpitaux</a>',
     ])
 
     html = _render_page(year_range,
@@ -1042,6 +1050,76 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     return out
 
 
+# ── Comparaison inter-hôpitaux (survie) ────────────────────────────────────────
+
+# Grands appareils déclinés en sections (rendus seulement si données présentes).
+_APPAREILS_COMPARAISON = ["SEIN", "APPAREIL DIGESTIF", "APPAREIL RESPIRATOIRE ET AUTRES THORAX",
+                          "VOIES URINAIRES", "ORGANES GENITAUX FEMININS"]
+
+
+def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
+                                       output_dir: Path) -> Path:
+    """Page unique « Comparaison inter-hôpitaux — Survie » : survie par hôpital,
+    groupée/colorée par GHU, repères AP-HP/GHU. Comparaison globale (TOTAL/TOTAL)
+    puis déclinaison par grand appareil (sections non vides uniquement)."""
+    annees = sorted(surv_df["annee"].unique()) if not surv_df.empty else []
+    last_year = int(annees[-1]) if annees else None
+    year_range = f"{annees[0]}–{annees[-1]}" if annees else ""
+
+    def _a_des_donnees(appareil):
+        h = surv_df[(surv_df.appareil == appareil) & (surv_df.organe == "TOTAL")
+                    & (surv_df.stade == "I-III") & (surv_df.population == "tous")
+                    & (surv_df.annee == last_year) & (surv_df.entite.isin(mapping))]
+        return not h.empty
+
+    intro = (
+        '<p style="color:#6C757D;font-size:.9rem;margin-bottom:18px">'
+        'Survie à 5 ans (barres) et à 1 an (losanges) par hôpital, pour les patients de '
+        'stade I-III. Les hôpitaux sont <b>colorés par GHU</b> et triés par survie décroissante. '
+        'Le trait plein noir marque la référence <b>AP-HP</b> ; les pointillés colorés, la '
+        'référence de chaque <b>GHU</b>.</p>'
+    )
+
+    content = ""
+    # 1. Comparaison globale (toutes localisations)
+    fig_glob = survival_hospital_comparison(surv_df, mapping, appareil="TOTAL",
+                                            organe="TOTAL", stade="I-III",
+                                            population="tous", annee=last_year)
+    content += section("Comparaison globale — toutes localisations",
+                       intro + chart_card(fig_to_html(fig_glob), "full"),
+                       "global")
+
+    # 2. Déclinaison par grand appareil (sections non vides)
+    nav_app = []
+    for app in _APPAREILS_COMPARAISON:
+        if not _a_des_donnees(app):
+            continue
+        anchor = "cmp-" + slugify(app)
+        fig = survival_hospital_comparison(surv_df, mapping, appareil=app,
+                                           organe="TOTAL", stade="I-III",
+                                           population="tous", annee=last_year)
+        content += section(app.capitalize(), chart_card(fig_to_html(fig), "full"), anchor)
+        nav_app.append(f'<a href="#{anchor}">{app.capitalize()}</a>')
+
+    nav = "\n".join([
+        '<a href="index.html">← Dashboard</a>',
+        '<a href="rapport_global_aphp.html">Rapport global AP-HP</a>',
+        '<a href="#global">Comparaison globale</a>',
+    ] + nav_app)
+
+    html = _render_page(year_range,
+        title="Comparaison inter-hôpitaux — Survie",
+        subtitle=f"Survie par hôpital, groupée par GHU · {year_range} · Indicateurs OECI",
+        nav_links=nav,
+        content=content,
+        date=datetime.now().strftime("%d/%m/%Y"),
+    )
+    out = output_dir / "rapport_comparaison_hopitaux.html"
+    out.write_text(html, encoding="utf-8")
+    print(f"  → {out}")
+    return out
+
+
 # ── Page d'index ───────────────────────────────────────────────────────────────
 
 def build_index(data_dir: Path, output_dir: Path) -> Path:
@@ -1089,12 +1167,24 @@ def build_index(data_dir: Path, output_dir: Path) -> Path:
         "ghu",
     )
 
-    # 3. Navigation liens simples
+    # 3. Comparaison inter-hôpitaux (survie)
+    cmp_link = (
+        '<a href="rapport_comparaison_hopitaux.html" style="display:inline-block;'
+        'background:#003189;color:white;padding:10px 22px;border-radius:7px;'
+        'text-decoration:none;font-weight:600;font-size:.88rem">'
+        'Comparer les hôpitaux par survie →</a>'
+        '<p style="color:#6C757D;font-size:.85rem;margin-top:10px">'
+        'Survie à 5 ans par hôpital, groupée et colorée par GHU, avec repères AP-HP / GHU.</p>'
+    )
+    content += section("Comparaison inter-hôpitaux — Survie", cmp_link, "comparaison")
+
+    # 4. Navigation liens simples
     content += section("Rapports par appareil / organe", organe_links, "nav-organes")
 
     nav = "\n".join([
         '<a href="#kpis">Indicateurs</a>',
         '<a href="#ghu">Par GHU</a>',
+        '<a href="#comparaison">Inter-hôpitaux</a>',
         '<a href="#nav-organes">Appareils / Organes</a>',
     ])
 

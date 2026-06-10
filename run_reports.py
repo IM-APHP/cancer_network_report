@@ -24,20 +24,29 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import fill_fake_data
 from export_internes import exporter_csv
+from pivot_loader import mapping_hopital_ghu
 from report_builder import (
     build_index,
     build_rapport_global,
     build_rapport_ghu,
     build_rapport_appareil,
     build_rapport_organe,
+    build_rapport_comparaison_hopitaux,
     load_aphp, load_regional, load_survival,
     set_fake_data,
 )
 from chart_utils import slugify
 from referentiels import GHU_LIST   # source unique
 
-DATA_DIR   = Path(__file__).parent / "data"
-OUTPUT_DIR = Path(__file__).parent / "output"
+DATA_DIR     = Path(__file__).parent / "data"
+OUTPUT_DIR   = Path(__file__).parent / "output"
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def _source_oeci_dir(fictif: bool) -> str:
+    """Répertoire des xlsx OECI selon le mode (fictif → data/, réel → templates/),
+    pour les lectures qui nécessitent les xlsx (ex. mapping hôpital→GHU)."""
+    return str(DATA_DIR if fictif else TEMPLATES_DIR)
 
 
 def generate_data(fictif: bool = True):
@@ -55,7 +64,7 @@ def generate_data(fictif: bool = True):
         exporter_csv(dossier_data=str(DATA_DIR), fictif=False)
 
 
-def build_all_reports():
+def build_all_reports(fictif: bool = True):
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     # Pre-load dataframes once
@@ -79,6 +88,10 @@ def build_all_reports():
 
     print("\n  Rapport global AP-HP...")
     build_rapport_global(DATA_DIR, OUTPUT_DIR)
+
+    print("\n  Comparaison inter-hôpitaux (survie)...")
+    mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
+    build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
 
     print("\n  Rapports GHU individuels...")
     for ghu in GHU_LIST:
@@ -124,6 +137,8 @@ def main():
     parser.add_argument("--ghu",        type=str)
     parser.add_argument("--appareil",   type=str)
     parser.add_argument("--organe",     type=str)
+    parser.add_argument("--comparaison-hopitaux", action="store_true",
+                        help="Construit seulement la page de comparaison inter-hôpitaux")
     args = parser.parse_args()
 
     # --real-data est ORTHOGONAL à --no-data/--data-only : il change la SOURCE
@@ -139,6 +154,12 @@ def main():
         return
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    if args.comparaison_hopitaux:
+        surv = load_survival(DATA_DIR)
+        mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
+        build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
+        return
 
     if args.ghu:
         build_rapport_ghu(args.ghu, DATA_DIR, OUTPUT_DIR)
@@ -160,7 +181,7 @@ def main():
                                aphp=aphp, reg=reg, surv=surv)
         return
 
-    build_all_reports()
+    build_all_reports(fictif=fictif)
 
 
 if __name__ == "__main__":

@@ -338,6 +338,30 @@ def charger_oeci(dossier="data", fictif=True):
     return df_aphp, df_survie
 
 
+def mapping_hopital_ghu(dossier="data", fictif=True):
+    """Rattachement {hôpital → code GHU} DÉRIVÉ DES DONNÉES (jamais codé en dur).
+
+    Dérivé de l'onglet « Effectifs recherche », seul endroit où GHU (nom complet) et
+    Hôpital coexistent sur la même ligne (niveau feuille « Hôpital - Organe -
+    Appareil »). Mapping stable d'une année à l'autre → on lit le 1er fichier."""
+    fichiers = _fichiers_oeci(dossier, fictif)
+    if not fichiers:
+        mode = "fictif" if fictif else "réel"
+        raise FileNotFoundError(f"Aucun fichier OECI ({mode}) dans {dossier!r}.")
+    _, path = fichiers[0]
+    df = pd.read_excel(path, sheet_name="Effectifs recherche")
+    df.columns = [str(c).strip() if isinstance(c, str) else c for c in df.columns]
+    cols = list(df.columns)
+    df = df.rename(columns={cols[0]: "niveau", cols[1]: "ghu", cols[2]: "hopital"})
+    feuilles = df[df["niveau"] == "Hôpital - Organe - Appareil"][["hopital", "ghu"]].dropna()
+    mapping = {}
+    for hop, ghu in feuilles.drop_duplicates().itertuples(index=False):
+        code = GHU_NOM2CODE.get(str(ghu).strip())
+        if code:
+            mapping[str(hop).strip()] = code
+    return mapping
+
+
 # ─────────────────────────── validation standalone ─────────────────────────
 def _valider(df_aphp, df_survie):
     pb = []

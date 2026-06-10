@@ -675,6 +675,87 @@ def survival_evolution(
     return fig
 
 
+# ── Comparaison inter-hôpitaux (survie) ────────────────────────────────────────
+
+def survival_hospital_comparison(
+    df_surv: pd.DataFrame,
+    mapping: dict,
+    appareil: str = "TOTAL",
+    organe: str = "TOTAL",
+    stade: str = "I-III",
+    population: str = "tous",
+    annee: int = None,
+) -> go.Figure:
+    """Barres de survie à 5 ans par hôpital, TRIÉES et COLORÉES par GHU (via
+    ``mapping`` {hôpital → code GHU}). Survie à 1 an superposée en losanges ;
+    repères horizontaux AP-HP (trait plein) et par GHU (pointillés couleur GHU).
+
+    Les hôpitaux sont les entités de ``df_surv`` présentes dans ``mapping`` ; un
+    hôpital sans donnée pour le périmètre demandé est simplement absent."""
+    filt = (
+        (df_surv["appareil"] == appareil) & (df_surv["organe"] == organe)
+        & (df_surv["stade"] == stade) & (df_surv["population"] == population)
+    )
+    base = df_surv[filt].copy()
+    if annee is None and not base.empty:
+        annee = int(base["annee"].max())
+    base = base[base["annee"] == annee]
+
+    hosp = base[base["entite"].isin(mapping)].copy()
+    if hosp.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Pas de données de survie pour ce périmètre",
+                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
+
+    hosp["ghu"] = hosp["entite"].map(mapping)
+    hosp = hosp.sort_values("survie_5ans", ascending=False)
+    ordre = list(hosp["entite"])   # ordre global (tri décroissant survie 5 ans)
+
+    fig = go.Figure()
+    # une trace barre par GHU → légende groupée + couleur cohérente avec le reste du TDB
+    ghus_presents = [g for g in GHU_LIST if g in set(hosp["ghu"])]
+    for ghu in ghus_presents:
+        sub = hosp[hosp["ghu"] == ghu]
+        fig.add_trace(go.Bar(
+            x=sub["entite"], y=sub["survie_5ans"], name=ghu,
+            marker_color=get_color(ghu),
+            hovertemplate=f"%{{x}}<br>{ghu}<br>Survie 5 ans : <b>%{{y}}%</b><extra></extra>",
+        ))
+    # survie 1 an en repères ponctuels
+    fig.add_trace(go.Scatter(
+        x=hosp["entite"], y=hosp["survie_1an"], name="Survie 1 an",
+        mode="markers", marker=dict(symbol="diamond", size=8, color="#1A1A2E"),
+        hovertemplate="%{x}<br>Survie 1 an : <b>%{y}%</b><extra></extra>",
+    ))
+
+    # repères de référence (lignes horizontales) : par GHU (pointillés) puis AP-HP (plein)
+    for ghu in ghus_presents:
+        ref = df_surv[(df_surv["entite"] == ghu) & filt & (df_surv["annee"] == annee)]
+        if not ref.empty:
+            fig.add_hline(y=float(ref.iloc[0]["survie_5ans"]),
+                          line=dict(color=get_color(ghu), dash="dot", width=1))
+    ap = df_surv[(df_surv["entite"] == "AP-HP") & filt & (df_surv["annee"] == annee)]
+    if not ap.empty:
+        y_ap = float(ap.iloc[0]["survie_5ans"])
+        fig.add_hline(y=y_ap, line=dict(color="#1A1A2E", dash="dash", width=1.8),
+                      annotation_text=f"AP-HP {y_ap:.0f}%", annotation_position="top right")
+
+    lo = _layout(hovermode="closest")
+    lo["yaxis"] = dict(showgrid=True, gridcolor="#F0F0F0", zeroline=False,
+                       title="Survie à 5 ans (%)", range=[0, 105])
+    lo["xaxis"] = dict(showgrid=False, zeroline=False, categoryorder="array",
+                       categoryarray=ordre, tickangle=-45)
+    titre_loc = appareil if appareil != "TOTAL" else "toutes localisations"
+    fig.update_layout(
+        title=dict(text=f"Survie à 5 ans par hôpital — {titre_loc} — stade {stade} ({annee})",
+                   font_size=16),
+        barmode="group",
+        **lo,
+    )
+    return fig
+
+
 # ── Délais de prise en charge ──────────────────────────────────────────────────
 
 def delay_evolution(
