@@ -18,7 +18,18 @@ Deux exceptions documentées :
     dimensions) : son squelette est reconstruit à partir des tuples de
     dimensions de « Délais PEC » (mêmes 5 dimensions), puis rempli.
 
-Reproductibilité : seed fixe (np.random.seed(42)).
+Reproductibilité : seed fixe (np.random.seed(42)), série entièrement déterministe.
+
+Série annuelle OECI : le fichier OECI ne porte pas de colonne année (l'année est
+dans le NOM de fichier). On produit donc un fichier fictif PAR année de la
+couverture du tableau de bord (``ANNEES``, 2019→2023). Pour ressembler à une vraie
+chronique (et non à des tirages indépendants), une BASE est tirée une seule fois
+par (feuille, appareil, organe, hôpital) puis chaque année en est dérivée par un
+multiplicateur conjoncturel (``OECI_MULT`` : 2019 = référence, 2020 ≈ -10 % COVID,
+2021 reprise partielle, 2022-2023 légère croissance) augmenté d'un petit bruit
+±2,5 % propre à chaque (feuille, année). La survie s'améliore légèrement chaque
+année (``OECI_SURV_DELTA`` ≈ +0,4 pt/an). Le même facteur appliqué à toutes les
+colonnes de comptage d'une feuille préserve mécaniquement les invariants ``≤``.
 
 Cohérence garantie :
   * OECI : somme Hôpital → GHU → AP-HP, et Organe → Appareil (les lignes
@@ -28,7 +39,8 @@ Cohérence garantie :
     (jointure sur (Niveau, Finess, Appareil, Organe, Année)).
   * Sous-effectifs ≤ effectif total ; pourcentages ∈ [0, 100] ; survie I-III >
     IV et 1 an > 5 ans ; délais : médiane > 0 et moyenne ≳ médiane ; origine géo
-    IDF/hors-IDF/International ≈ 100 % par groupe ; creux COVID 2020 (~ -8 %).
+    IDF/hors-IDF/International ≈ 100 % par groupe ; creux COVID 2020 (OECI ~ -10 %,
+    régional ~ -8 %).
 """
 import os
 import numpy as np
@@ -37,8 +49,7 @@ import openpyxl
 np.random.seed(42)
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
-OECI_IN = os.path.join(DATA, "indicateurs_oeci_2025_M12.xlsx")
-OECI_OUT = os.path.join(DATA, "indicateurs_oeci_2025_M12_fictif.xlsx")
+OECI_IN = os.path.join(DATA, "indicateurs_oeci_2025_M12.xlsx")  # gabarit (structure de réf.)
 PAT_IN = os.path.join(DATA, "canceroBR_16-25_Pat_13032026.xlsx")
 PAT_OUT = os.path.join(DATA, "canceroBR_16-25_Pat_13032026_fictif.xlsx")
 SEJ_IN = os.path.join(DATA, "canceroBR_16-25_Sej_13032026.xlsx")
@@ -96,6 +107,130 @@ def rint(x):
     return int(max(0, round(x)))
 
 
+# ═══════════════════ série annuelle OECI : conjoncture & dérivation ═════════
+# Couverture du tableau de bord. CONSTANTE de module : étendre la plage suffit
+# (OECI_MULT / OECI_SURV_DELTA s'y adaptent automatiquement).
+ANNEES = (2019, 2020, 2021, 2022, 2023)
+
+
+def _build_oeci_mult(annees):
+    """Multiplicateur de volume par année (chronique, pas tirages indépendants) :
+    2019 = référence (1,0) ; 2020 ≈ -10 % (creux COVID) ; 2021 reprise partielle
+    (~ +5 % vs 2020) ; ≥ 2022 légère croissance ~ +2,5 %/an. Avant 2019 : léger
+    recul rétrospectif (~ -2 %/an)."""
+    m = {}
+    for a in annees:
+        if a <= 2019:
+            m[a] = round(0.98 ** (2019 - a), 4)
+        elif a == 2020:
+            m[a] = 0.90
+        elif a == 2021:
+            m[a] = 0.945
+        else:
+            m[a] = round(0.945 * 1.025 ** (a - 2021), 4)
+    return m
+
+
+def _build_oeci_surv_delta(annees):
+    """Amélioration de survie cumulée vs 2019 : ~ +0,4 pt/an (bornée à 100 au
+    moment de l'écriture). Garantit survie_2023 ≳ survie_2019."""
+    return {a: round(0.4 * (a - 2019), 2) for a in annees}
+
+
+OECI_MULT = _build_oeci_mult(ANNEES)
+OECI_SURV_DELTA = _build_oeci_surv_delta(ANNEES)
+
+# Caches de BASE (tirée une seule fois, seed 42) — réutilisés pour chaque année.
+BASE_PATIENT = {}   # (app, org, hop) -> dict colonne->valeur
+BASE_SEJOUR = {}
+BASE_CHIR = {}
+BASE_DELAIS = {}
+BASE_SURVIE = {}
+BASE_EFF = {}       # (ghu, hop, app, org, age) -> dict
+BASE_ORIGINE = {}   # (niveau, ghu, hop) -> (total_base, poids origines)
+
+
+def _yf(mult):
+    """Facteur (feuille, année) = multiplicateur conjoncturel × bruit ±2,5 %.
+    Appliqué à l'identique à TOUTES les colonnes de comptage d'une feuille, il
+    préserve les relations ``sous-effectif ≤ total`` héritées de la base."""
+    return mult * (1.0 + float(np.random.uniform(-0.025, 0.025)))
+
+
+def scale_counts(base, mult):
+    """Onglets de comptages purs (patient, séjour) : tout est volume."""
+    f = _yf(mult)
+    return {c: rint(v * f) for c, v in base.items()}
+
+
+def scale_chir(base, mult):
+    """Chirurgie : col 6 = volume (mis à l'échelle) ; 7..12 = taux % stables
+    (petit bruit annuel, bornés [0, 100])."""
+    f = _yf(mult)
+    out = {6: rint(base[6] * f)}
+    for c in range(7, 13):
+        out[c] = round(min(100.0, max(0.0, base[c] * (1 + float(np.random.uniform(-0.02, 0.02))))), 1)
+    return out
+
+
+def scale_delais(base, mult):
+    """Délais : Nb & Nb urg mis à l'échelle (urg ≤ nb préservé), % urg recalculé ;
+    moyenne/médiane stables avec un MÊME bruit par bloc (préserve moyenne ≳ médiane
+    et médiane > 0)."""
+    f = _yf(mult)
+    out = {}
+    for c0 in (6, 11, 16, 21):
+        nb = rint(base[c0] * f)
+        urg = min(nb, rint(base[c0 + 1] * f))
+        out[c0] = nb
+        out[c0 + 1] = urg
+        out[c0 + 2] = round(urg / nb * 100, 1) if nb else 0.0
+        bn = 1 + float(np.random.uniform(-0.02, 0.02))
+        out[c0 + 3] = round(max(0.2, base[c0 + 3] * bn), 1)
+        out[c0 + 4] = round(max(0.1, base[c0 + 4] * bn), 1)
+    return out
+
+
+def scale_survie(base, mult, surv_delta):
+    """Survie : Nb mis à l'échelle (Nvx ≤ Tous, IV ≤ I-III préservés) ; % décalés
+    uniformément de +surv_delta (+ bruit ±0,15 pt) — le décalage uniforme préserve
+    I-III > IV et 1 an > 5 ans, et fait croître la survie dans le temps."""
+    f = _yf(mult)
+    out = {}
+    for c in (6, 8, 10, 12, 14, 16, 18, 20):
+        out[c] = rint(base[c] * f)
+    for c in (7, 9, 11, 13, 15, 17, 19, 21):
+        out[c] = round(min(100.0, max(0.0, base[c] + surv_delta + float(np.random.uniform(-0.15, 0.15)))), 1)
+    return out
+
+
+def scale_eff(base, mult):
+    """Effectifs recherche : patients & séjours mis à l'échelle (séjours ≥ patients
+    préservé)."""
+    f = _yf(mult)
+    return {7: rint(base[7] * f), 8: rint(base[8] * f)}
+
+
+def make_provider(cache, gen_fn, scale_fn, *scale_args):
+    """Fournisseur de feuille pour une année : tire la BASE une seule fois (mise en
+    cache au 1er passage) puis renvoie sa version dérivée pour l'année courante."""
+    def provider(app, org, hop):
+        key = (app, org, hop)
+        if key not in cache:
+            cache[key] = gen_fn(app, org, hop)
+        return scale_fn(cache[key], *scale_args)
+    return provider
+
+
+def make_eff_provider(mult):
+    def provider(ghu, hop, app, org, age):
+        key = (ghu, hop, app, org, age)
+        if key not in BASE_EFF:
+            BASE_EFF[key] = gen_effectif_leaf(app, org, hop, age)
+        return scale_eff(BASE_EFF[key], mult)
+    return provider
+
+
 # ───────────────────────── sélection des feuilles pour agrégation OECI ──────
 def select_leaves(niv, ghu_col, hop, app, org, leaves):
     """leaves : liste de (ghu_full, hop, app, org, vals).
@@ -127,11 +262,11 @@ def collect_rows(ws, hdr):
 
 
 # ════════════════════════════ OECI ═════════════════════════════════════════
-def fill_origine_geo(ws):
-    """3 colonnes : Nb patients (5), Nb patients tot (6), % patients (7).
-    Regroupe les lignes consécutives partageant (Niveau, GHU, Hôpital) ; répartit
-    un total entre les origines présentes (IDF dominant) ; % = part/tot*100."""
-    groups = []  # [(key, [rowidx…], [origine…])]
+def origine_groups(ws):
+    """Regroupe les lignes consécutives partageant (Niveau, GHU, Hôpital).
+    Renvoie [(key, [rowidx…], [origine…])]. Structure identique d'une année à
+    l'autre (même gabarit rechargé) → clés et indices de lignes stables."""
+    groups = []
     for r in range(2, ws.max_row + 1):
         niv = ws.cell(r, 1).value
         if niv in (None, ""):
@@ -142,16 +277,27 @@ def fill_origine_geo(ws):
             groups[-1][1].append(r); groups[-1][2].append(orig)
         else:
             groups.append((key, [r], [orig]))
-    for (niv, ghu, hop), rows, origs in groups:
-        scale = hosp_factor(hop) if hop else (6.0 if "GH" in (niv or "") else 33.0)
-        total = rint(np.random.uniform(800, 3500) * max(scale, 0.5))
-        # proportions de référence par origine
-        ref = {"IDF": np.random.uniform(0.70, 0.82),
-               "Fr_notIDF": np.random.uniform(0.12, 0.25),
-               "International": np.random.uniform(0.003, 0.03)}
-        present = [o for o in origs]
-        w = np.array([ref.get(o, 0.1) for o in present], float)
-        w = w / w.sum()
+    return groups
+
+
+def fill_origine_geo_year(ws, mult):
+    """Origine géo pour une année : 3 colonnes Nb patients (5), Nb tot (6), % (7).
+    Le total de référence et les proportions par origine sont tirés une seule fois
+    par groupe (cache ``BASE_ORIGINE``), puis le total est mis à l'échelle par le
+    multiplicateur annuel (+ bruit ±2,5 %), proportions conservées."""
+    for key, rows, origs in origine_groups(ws):
+        niv, ghu, hop = key
+        if key not in BASE_ORIGINE:
+            scale = hosp_factor(hop) if hop else (6.0 if "GH" in (niv or "") else 33.0)
+            total_base = float(np.random.uniform(800, 3500) * max(scale, 0.5))
+            ref = {"IDF": np.random.uniform(0.70, 0.82),
+                   "Fr_notIDF": np.random.uniform(0.12, 0.25),
+                   "International": np.random.uniform(0.003, 0.03)}
+            w = np.array([ref.get(o, 0.1) for o in origs], float)
+            w = w / w.sum()
+            BASE_ORIGINE[key] = (total_base, w)
+        total_base, w = BASE_ORIGINE[key]
+        total = rint(total_base * mult * (1 + float(np.random.uniform(-0.025, 0.025))))
         parts = [rint(total * x) for x in w]
         diff = total - sum(parts)
         parts[int(np.argmax(parts))] += diff  # ajuste l'arrondi sur la plus grande part
@@ -250,14 +396,24 @@ def gen_survie_leaf(app, org, hop):
     return {6 + i: v for i, v in enumerate(vals)}
 
 
-def fill_count_sheet(ws, hdr, gen_leaf, measure_cols):
-    """Onglets de comptages purs (patient, séjour) : agrégats = sommes."""
+def gen_effectif_leaf(app, org, hop, age):
+    """Feuille « Effectifs recherche » (leaf = Hôpital-Organe-Appareil) :
+    Nb patients (7) pondéré par classe d'âge, Nb séjours (8) ≥ patients."""
+    pat = rint(np.random.gamma(1.6, 6) * org_factor(app, org) * hosp_factor(hop)
+               * (1.0 if age == "Adultes" else 0.5 if age == "Gériatrie" else 0.2) + 1)
+    sej = rint(pat * np.random.uniform(1.2, 3.5))
+    return {7: pat, 8: sej}
+
+
+def fill_count_sheet(ws, hdr, leaf_value, measure_cols):
+    """Onglets de comptages purs (patient, séjour) : agrégats = sommes.
+    ``leaf_value(app, org, hop)`` fournit la feuille déjà dérivée pour l'année."""
     rows = collect_rows(ws, hdr)
     vals = {}
     leaves = []
     for (r, niv, ghu, hop, app, org) in rows:
         if niv == "Hopital Organe":
-            v = gen_leaf(app, org, hop)
+            v = leaf_value(app, org, hop)
             vals[r] = v
             leaves.append((HOSP2GHU.get(hop), hop, app, org, v))
     for (r, niv, ghu, hop, app, org) in rows:
@@ -270,14 +426,15 @@ def fill_count_sheet(ws, hdr, gen_leaf, measure_cols):
             ws.cell(r, c).value = x
 
 
-def fill_rate_sheet(ws, hdr, gen_leaf, count_col, rate_cols):
-    """Onglet chirurgie : count_col sommé, rate_cols en moyenne pondérée par count_col."""
+def fill_rate_sheet(ws, hdr, leaf_value, count_col, rate_cols):
+    """Onglet chirurgie : count_col sommé, rate_cols en moyenne pondérée par count_col.
+    ``leaf_value(app, org, hop)`` fournit la feuille déjà dérivée pour l'année."""
     rows = collect_rows(ws, hdr)
     vals = {}
     leaves = []
     for (r, niv, ghu, hop, app, org) in rows:
         if niv == "Hopital Organe":
-            v = gen_leaf(app, org, hop)
+            v = leaf_value(app, org, hop)
             vals[r] = v
             leaves.append((HOSP2GHU.get(hop), hop, app, org, v))
     for (r, niv, ghu, hop, app, org) in rows:
@@ -294,16 +451,17 @@ def fill_rate_sheet(ws, hdr, gen_leaf, count_col, rate_cols):
             ws.cell(r, c).value = x
 
 
-def fill_delais_sheet(ws, hdr=2):
+def fill_delais_sheet(ws, hdr, leaf_value):
     """4 blocs (TOTAL/CHIR/MED/RADIO). Nb & urg sommés ; %urg dérivé ;
-    moyenne/médiane en moyenne pondérée par Nb."""
+    moyenne/médiane en moyenne pondérée par Nb.
+    ``leaf_value(app, org, hop)`` fournit la feuille déjà dérivée pour l'année."""
     rows = collect_rows(ws, hdr)
     vals = {}
     leaves = []
     blocks = [6, 11, 16, 21]
     for (r, niv, ghu, hop, app, org) in rows:
         if niv == "Hopital Organe":
-            v = gen_delais_leaf(app, org, hop)
+            v = leaf_value(app, org, hop)
             vals[r] = v
             leaves.append((HOSP2GHU.get(hop), hop, app, org, v))
     for (r, niv, ghu, hop, app, org) in rows:
@@ -329,10 +487,11 @@ def fill_delais_sheet(ws, hdr=2):
             ws.cell(r, c).value = x
 
 
-def fill_survie_sheet(ws_sur, ws_del):
+def fill_survie_sheet(ws_sur, ws_del, leaf_value):
     """« Survie globale » est vide : on reconstruit son squelette à partir des
     tuples de dimensions de « Délais PEC », puis on remplit. Colonnes survie :
-    Niveau(1), Appareil patient(2), Organe patient(3), GHU(4), Hôpital(5)."""
+    Niveau(1), Appareil patient(2), Organe patient(3), GHU(4), Hôpital(5).
+    ``leaf_value(app, org, hop)`` fournit la feuille déjà dérivée pour l'année."""
     del_rows = collect_rows(ws_del, 2)  # (r, niv, ghu, hop, app, org)
     nb_cols = [6, 8, 10, 12, 14, 16, 18, 20]   # colonnes « Nb patients »
     pct_cols = [7, 9, 11, 13, 15, 17, 19, 21]  # colonnes « % survie »
@@ -351,7 +510,7 @@ def fill_survie_sheet(ws_sur, ws_del):
         ws_sur.cell(r, 4).value = ghu
         ws_sur.cell(r, 5).value = hop
         if niv == "Hopital Organe":
-            v = gen_survie_leaf(app, org, hop)
+            v = leaf_value(app, org, hop)
             rowvals[r] = v
             leaves.append((HOSP2GHU.get(hop), hop, app, org, v))
     for i, (niv, ghu, hop, app, org) in enumerate(out):
@@ -371,9 +530,10 @@ def fill_survie_sheet(ws_sur, ws_del):
             ws_sur.cell(r, c).value = x
 
 
-def fill_effectifs(ws, hdr=1):
+def fill_effectifs(ws, hdr, leaf_value):
     """Niveau hiérarchique avec dimension Classe age (col 6). Mesures : Nb
-    patients (7), Nb séjours (8) ≥ patients. Leaf = 'Hôpital - Organe - Appareil'."""
+    patients (7), Nb séjours (8) ≥ patients. Leaf = 'Hôpital - Organe - Appareil'.
+    ``leaf_value(ghu, hop, app, org, age)`` fournit la feuille dérivée pour l'année."""
     rows = []
     for r in range(hdr + 1, ws.max_row + 1):
         niv = ws.cell(r, 1).value
@@ -385,9 +545,8 @@ def fill_effectifs(ws, hdr=1):
     leaves = []  # (ghu, hop, app, org, age, pat, sej)
     for (r, niv, ghu, hop, app, org, age) in rows:
         if niv == "Hôpital - Organe - Appareil":
-            pat = rint(np.random.gamma(1.6, 6) * org_factor(app, org) * hosp_factor(hop)
-                       * (1.0 if age == "Adultes" else 0.5 if age == "Gériatrie" else 0.2) + 1)
-            sej = rint(pat * np.random.uniform(1.2, 3.5))
+            v = leaf_value(ghu, hop, app, org, age)
+            pat, sej = v[7], v[8]
             vals[r] = {7: pat, 8: sej}
             leaves.append((ghu, hop, app, org, age, pat, sej))
 
@@ -415,18 +574,163 @@ def fill_effectifs(ws, hdr=1):
             ws.cell(r, c).value = x
 
 
+def oeci_out_path(annee):
+    """Chemin du fichier annuel : l'année est portée par le NOM (convention OECI)."""
+    return os.path.join(DATA, f"indicateurs_oeci_{annee}_M12_fictif.xlsx")
+
+
+def fill_oeci_year(wb, annee):
+    """Remplit un classeur OECI (gabarit rechargé) pour une année donnée, en
+    dérivant la BASE partagée par le multiplicateur conjoncturel de l'année."""
+    mult = OECI_MULT[annee]
+    sd = OECI_SURV_DELTA[annee]
+    fill_origine_geo_year(wb["Origine géo"], mult)
+    fill_count_sheet(wb["Indicateurs patient"], 1,
+                     make_provider(BASE_PATIENT, gen_patient_leaf, scale_counts, mult), list(range(6, 17)))
+    fill_count_sheet(wb["Indicateurs séjour"], 1,
+                     make_provider(BASE_SEJOUR, gen_sejour_leaf, scale_counts, mult), list(range(6, 17)))
+    fill_rate_sheet(wb["Indicateurs chirurgie"], 1,
+                    make_provider(BASE_CHIR, gen_chirurgie_leaf, scale_chir, mult), 6, list(range(7, 13)))
+    fill_delais_sheet(wb["Délais PEC"], 2,
+                      make_provider(BASE_DELAIS, gen_delais_leaf, scale_delais, mult))
+    fill_survie_sheet(wb["Survie globale"], wb["Délais PEC"],
+                      make_provider(BASE_SURVIE, gen_survie_leaf, scale_survie, mult, sd))
+    fill_effectifs(wb["Effectifs recherche"], 1, make_eff_provider(mult))
+
+
+def _find_niveau_row(ws, niveau, hdr=1):
+    """Indice de la 1ʳᵉ ligne de niveau donné (ex. 'APHP Total'), ou None."""
+    for r in range(hdr + 1, ws.max_row + 1):
+        if ws.cell(r, 1).value == niveau:
+            return r
+    return None
+
+
+def read_recap(wb):
+    """Indicateurs AP-HP (toutes localisations) pour le récapitulatif inter-années :
+    nb patients (Indicateurs patient · APHP Total · col 6) et survie 5 ans / 1 an
+    stade I-III « Tous patients » (Survie globale · APHP Total · col 7 / 11)."""
+    wp = wb["Indicateurs patient"]
+    rp = _find_niveau_row(wp, "APHP Total")
+    nb_pat = wp.cell(rp, 6).value if rp else None
+    ws = wb["Survie globale"]
+    rs = _find_niveau_row(ws, "APHP Total")
+    surv5 = ws.cell(rs, 7).value if rs else None
+    surv1 = ws.cell(rs, 11).value if rs else None
+    return {"nb_patients": nb_pat, "survie_5ans_I_III": surv5, "survie_1an_I_III": surv1}
+
+
+def validate_oeci(wb, annee):
+    """Vérifie pour une année : agrégats à 0 écart, bornes, ordres de survie/délais.
+    Renvoie la liste des anomalies (vide si tout est conforme)."""
+    from collections import defaultdict
+    issues = []
+
+    # 1) Agrégation Hôpital → GHU → AP-HP et Organe → (APHP Organe) sur l'onglet patient.
+    ws = wb["Indicateurs patient"]
+    rows = collect_rows(ws, 1)
+    cols = list(range(6, 17))
+    total = {c: 0 for c in cols}
+    by_ghu = defaultdict(lambda: {c: 0 for c in cols})
+    by_org = defaultdict(lambda: {c: 0 for c in cols})
+    for (r, niv, ghu, hop, app, org) in rows:
+        if niv != "Hopital Organe":
+            continue
+        g = HOSP2GHU.get(hop)
+        for c in cols:
+            v = ws.cell(r, c).value or 0
+            total[c] += v
+            by_ghu[g][c] += v
+            by_org[(app, org)][c] += v
+        # bornes leaf : Nvx ≤ Nb, Patients chir ≤ Nb
+        nb, nvx, chir = ws.cell(r, 6).value or 0, ws.cell(r, 7).value or 0, ws.cell(r, 8).value or 0
+        if nvx > nb or chir > nb:
+            issues.append(f"patient borne leaf r{r}: nvx={nvx} chir={chir} > nb={nb}")
+    for (r, niv, ghu, hop, app, org) in rows:
+        if niv == "APHP Total":
+            for c in cols:
+                if (ws.cell(r, c).value or 0) != total[c]:
+                    issues.append(f"patient APHP Total col{c}: {ws.cell(r, c).value} ≠ Σleaves {total[c]}")
+        elif niv == "GH Total":
+            for c in cols:
+                if (ws.cell(r, c).value or 0) != by_ghu[ghu][c]:
+                    issues.append(f"patient GH Total {ghu} col{c}: écart")
+        elif niv == "APHP Organe":
+            for c in cols:
+                if (ws.cell(r, c).value or 0) != by_org[(app, org)][c]:
+                    issues.append(f"patient APHP Organe {app}/{org} col{c}: écart")
+
+    # 2) Survie AP-HP : I-III > IV (5 ans) et 1 an > 5 ans (I-III).
+    ws = wb["Survie globale"]
+    rs = _find_niveau_row(ws, "APHP Total")
+    if rs:
+        s5_13, s5_4 = ws.cell(rs, 7).value, ws.cell(rs, 9).value
+        s1_13 = ws.cell(rs, 11).value
+        if not (s5_13 > s5_4):
+            issues.append(f"survie AP-HP : 5 ans I-III ({s5_13}) ≤ IV ({s5_4})")
+        if not (s1_13 > s5_13):
+            issues.append(f"survie AP-HP : 1 an ({s1_13}) ≤ 5 ans ({s5_13}) (I-III)")
+
+    # 3) Délais AP-HP : médiane > 0 et moyenne ≳ médiane sur chaque bloc.
+    ws = wb["Délais PEC"]
+    rd = _find_niveau_row(ws, "APHP Total", hdr=2)
+    if rd:
+        for c0 in (6, 11, 16, 21):
+            moy, med = ws.cell(rd, c0 + 3).value, ws.cell(rd, c0 + 4).value
+            if not (med > 0):
+                issues.append(f"délais AP-HP bloc col{c0}: médiane {med} ≤ 0")
+            if moy + 0.05 < med:
+                issues.append(f"délais AP-HP bloc col{c0}: moyenne {moy} < médiane {med}")
+    return issues
+
+
 def fill_oeci():
-    print("OECI : lecture du gabarit…")
-    wb = openpyxl.load_workbook(OECI_IN)
-    fill_origine_geo(wb["Origine géo"])
-    fill_count_sheet(wb["Indicateurs patient"], 1, gen_patient_leaf, list(range(6, 17)))
-    fill_count_sheet(wb["Indicateurs séjour"], 1, gen_sejour_leaf, list(range(6, 17)))
-    fill_rate_sheet(wb["Indicateurs chirurgie"], 1, gen_chirurgie_leaf, 6, list(range(7, 13)))
-    fill_delais_sheet(wb["Délais PEC"], 2)
-    fill_survie_sheet(wb["Survie globale"], wb["Délais PEC"])
-    fill_effectifs(wb["Effectifs recherche"], 1)
-    wb.save(OECI_OUT)
-    print(f"  → écrit : {OECI_OUT}")
+    """Produit la SÉRIE ANNUELLE OECI (un fichier fictif par année de ``ANNEES``).
+    La BASE est tirée une seule fois (au 1er passage, cache ``BASE_*``) puis chaque
+    année en est dérivée. Renvoie le récapitulatif inter-années [(annee, recap)…]."""
+    print(f"OECI : série annuelle {ANNEES[0]}→{ANNEES[-1]} (base tirée une seule fois)…")
+    recap = []
+    all_issues = {}
+    for annee in ANNEES:
+        wb = openpyxl.load_workbook(OECI_IN)  # gabarit rechargé : structure intacte
+        fill_oeci_year(wb, annee)
+        issues = validate_oeci(wb, annee)
+        all_issues[annee] = issues
+        out = oeci_out_path(annee)
+        wb.save(out)
+        recap.append((annee, read_recap(wb)))
+        flag = "OK" if not issues else f"{len(issues)} anomalie(s)"
+        print(f"  → {annee} (×{OECI_MULT[annee]:.3f}) : {os.path.basename(out)}  [{flag}]")
+    _print_recap(recap, all_issues)
+    return recap
+
+
+def _print_recap(recap, all_issues):
+    """Affiche le récapitulatif inter-années AP-HP + le bilan de validation."""
+    print("\n  Récapitulatif inter-années — AP-HP (toutes localisations) :")
+    print(f"    {'Année':>6} | {'Nb patients':>12} | {'Survie 5 ans I-III':>18} | {'Survie 1 an I-III':>17}")
+    print("    " + "-" * 62)
+    prev_nb = prev_surv = None
+    for annee, rc in recap:
+        nb, s5 = rc["nb_patients"], rc["survie_5ans_I_III"]
+        d_nb = "" if prev_nb is None else f"({(nb / prev_nb - 1) * 100:+.1f} %)"
+        d_s = "" if prev_surv is None else f"({s5 - prev_surv:+.2f} pt)"
+        print(f"    {annee:>6} | {nb:>12,} {d_nb:>9} | {s5:>10} {d_s:>7} | {rc['survie_1an_I_III']:>17}")
+        prev_nb, prev_surv = nb, s5
+    # contrôles transverses
+    survs = [rc["survie_5ans_I_III"] for _, rc in recap]
+    nbs = [rc["nb_patients"] for _, rc in recap]
+    print("\n  Contrôles :")
+    print(f"    creux COVID 2020 : nb min en {recap[nbs.index(min(nbs))][0]} "
+          f"({'OK' if recap[nbs.index(min(nbs))][0] == 2020 else 'À VÉRIFIER'})")
+    print(f"    survie croissante {recap[0][0]}→{recap[-1][0]} : "
+          f"{survs[0]} → {survs[-1]} "
+          f"({'OK' if survs[-1] >= survs[0] and survs == sorted(survs) else 'À VÉRIFIER'})")
+    tot_issues = sum(len(v) for v in all_issues.values())
+    print(f"    agrégats/bornes : {'OK — 0 anomalie' if tot_issues == 0 else f'{tot_issues} anomalie(s)'}")
+    for annee, iss in all_issues.items():
+        for msg in iss[:5]:
+            print(f"      [{annee}] {msg}")
 
 
 # ════════════════════════════ Régional ═════════════════════════════════════
