@@ -41,7 +41,7 @@ TREATMENT_COLS = {
     "nb_sejours_palliatifs":      "Soins palliatifs",
 }
 
-from referentiels import GHU_LIST   # source unique (réexporté pour report_builder)
+from referentiels import GHU_LIST, APPAREIL_RESIDUEL   # source unique (réexporté pour report_builder)
 
 # ── Style global ───────────────────────────────────────────────────────────────
 
@@ -411,6 +411,7 @@ def bar_appareils_years(
         (df["entite"] == entity)
         & (df["organe"] == "TOTAL")
         & (df["appareil"] != "TOTAL")
+        & (df["appareil"] != APPAREIL_RESIDUEL)
         & (df["annee"].isin(years))
     ].copy()
 

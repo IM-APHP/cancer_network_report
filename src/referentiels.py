@@ -9,6 +9,10 @@ correspondance des loaders (nom GHU → code ; Statut établissement → type)."
 # Codes GHU internes — ordre d'affichage des rapports.
 GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU SUN"]
 
+# Appareil résiduel (catégorie « fourre-tout » PMSI) : exclu des affichages/agrégations
+# par appareil, mais son rapport reste généré et accessible via un lien dédié.
+APPAREIL_RESIDUEL = "Non décidable"
+
 # Nom complet GHU (tel qu'écrit dans la colonne GHU des fichiers OECI) → code interne.
 GHU_NOM2CODE = {
     "APHP.Centre-Université de Paris": "GHU Centre",

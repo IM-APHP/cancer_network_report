@@ -28,6 +28,7 @@ from chart_utils import (
     slugify,
     GHU_LIST, TREATMENT_COLS,
 )
+from referentiels import APPAREIL_RESIDUEL
 
 # ── Template HTML ──────────────────────────────────────────────────────────────
 
@@ -273,30 +274,46 @@ def ghu_nav_cards_html() -> str:
     )
 
 
+def _appareils_affichables(df: pd.DataFrame) -> list:
+    """Appareils à AFFICHER : hors sentinelle 'TOTAL' et hors appareil résiduel
+    (« Non décidable »). Centralise l'exclusion pour tous les listings/agrégations."""
+    return [a for a in sorted(df[df.appareil != "TOTAL"].appareil.unique())
+            if a != APPAREIL_RESIDUEL]
+
+
 def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_organe_") -> str:
-    """Liens vers rapports organe, regroupés par appareil."""
-    appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
-    html = ""
-    for app in appareils:
+    """Liens vers rapports organe, regroupés par appareil. L'appareil résiduel est
+    exclu de la liste générale et ajouté séparément en fin de section (son rapport
+    reste accessible)."""
+    def _bloc(app: str, force: bool = False) -> str:
         app_slug = slugify(app)
         orgs = sorted(
             aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app) & (aphp.organe != "TOTAL")]
             .organe.unique()
         )
-        if not orgs:
-            continue
-        html += (
+        if not orgs and not force:
+            return ""
+        out = (
             f'<div style="margin-bottom:14px">'
             f'<a href="rapport_appareil_{app_slug}.html" style="font-weight:700;'
             f'color:#003189;font-size:.9rem;text-decoration:none">{app} →</a><br>'
         )
         for org in orgs:
             org_slug = slugify(org)
-            html += (
+            out += (
                 f'<a href="{anchor_prefix}{org_slug}.html" style="display:inline-block;'
                 f'margin:2px 6px;color:#457B9D;font-size:.82rem">{org} →</a>'
             )
-        html += "</div>"
+        return out + "</div>"
+
+    html = "".join(_bloc(app) for app in _appareils_affichables(aphp))
+    # Appareil résiduel : lien dédié en fin de section, séparé.
+    if APPAREIL_RESIDUEL in set(aphp["appareil"]):
+        html += (
+            '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #DEE2E6">'
+            '<span style="font-size:.78rem;color:#6C757D">Catégorie résiduelle :</span><br>'
+            + _bloc(APPAREIL_RESIDUEL, force=True) + '</div>'
+        )
     return html
 
 
@@ -383,7 +400,7 @@ def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None
     pas de mesure « séjours totaux »). Style aligné sur « Survie et délais »."""
     if years is None:
         years = sorted(aphp_df["annee"].unique())
-    appareils = sorted(aphp_df[aphp_df.appareil != "TOTAL"].appareil.unique())
+    appareils = _appareils_affichables(aphp_df)
     n = len(years)
 
     head = (
@@ -629,9 +646,9 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "ghu")
 
-    # Liens vers pages appareils
+    # Liens vers pages appareils (hors appareil résiduel)
     app_links_global = ""
-    for app in sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique()):
+    for app in _appareils_affichables(aphp):
         app_s = slugify(app)
         app_links_global += (
             f'<a href="rapport_appareil_{app_s}.html" style="display:inline-block;'
@@ -778,7 +795,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "evolution")
     app_links_ghu = ""
-    for app in sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique()):
+    for app in _appareils_affichables(aphp):
         app_s = slugify(app)
         ghu_s = slugify(ghu_name)
         app_links_ghu += (
