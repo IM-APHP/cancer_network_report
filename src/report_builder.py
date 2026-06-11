@@ -841,6 +841,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
         '<a href="#evolution">Évolution</a>',
         '<a href="#appareils">Par appareil</a>',
         '<a href="#survie">Survie & Délais</a>',
+        '<a href="#nav-organes">Par organe</a>',
     ])
 
     # Bandeau inter-GHU (AP-HP + chaque GHU, GHU courant mis en évidence)
@@ -875,14 +876,12 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
           <strong style="color:#003189">Rapports par appareil :</strong><br>
           {app_links_ghu}
         </div>
-        <div style="margin-top:14px;padding:14px;background:#F8F9FA;border-radius:8px">
-          <strong style="color:#003189">Rapports par organe ({ghu_name}) :</strong><br>
-          {organe_links_ghu}
-        </div>
     """, "appareils")
     surv_table = survival_delay_table(surv, aphp, ghu_name)
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie")
+    # Navigation par organe (GHU) — déplacée en bas de page
+    content += section(f"Rapports par organe ({ghu_name})", organe_links_ghu, "nav-organes")
 
     html = _render_page(year_range,
         title=f"Rapport d'activité — {ghu_name}",
