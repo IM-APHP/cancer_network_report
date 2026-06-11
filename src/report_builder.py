@@ -633,8 +633,14 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     reg_total = reg[(reg.appareil == "TOTAL")]
     fig_reg_pts = regional_comparison(reg_total, "nb_patients",
                                       "Patients — AP-HP vs contexte régional")
-    fig_reg_chir = regional_comparison(reg_total, "nb_sejours_chirurgie",
-                                       "Séjours chirurgie — AP-HP vs contexte régional")
+    reg_total_last = reg[(reg.appareil == "TOTAL") & (reg.organe == "TOTAL")
+                         & (reg.annee == last_year)]
+    # entities = types d'établissement (sinon donut_market_share filtre sur GHU_LIST par défaut)
+    types_etab = sorted(reg_total_last["entite"].unique())
+    fig_reg_donut = donut_market_share(
+        reg_total_last, "entite", "nb_patients",
+        f"Répartition de l'activité par type d'établissement — {last_year}",
+        entities=types_etab)
 
     # ── Graphique patients par appareil ──
     fig_bar_app = bar_appareils_years(aphp)
@@ -645,14 +651,6 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         "AP-HP",
         lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
     )
-
-    # GHU liens sobres
-    ghu_links_global = " &nbsp;|&nbsp; ".join(
-        f'<a href="rapport_{g.lower().replace(" ","_")}.html" style="color:#003189">{g}</a>'
-        for g in GHU_LIST
-    )
-    content += section("Groupes Hospitaliers Universitaires",
-                       f'<div style="line-height:2">{ghu_links_global}</div>', "ghu-nav")
 
     content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
 
@@ -667,6 +665,18 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
           {chart_card(fig_to_html(fig_sejours))}
         </div>
     """, "evolution")
+
+    # Contexte régional — remonté juste après l'Évolution ; patients + donut par type
+    content += section("Contexte régional", f"""
+        <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
+          Comparaison avec les autres types d'établissements de la région Île-de-France
+          (Cliniques, Centres Hospitaliers, CHU, PSPH).
+        </p>
+        <div class="chart-grid-2">
+          {chart_card(fig_to_html(fig_reg_pts))}
+          {chart_card(fig_to_html(fig_reg_donut))}
+        </div>
+    """, "regional")
 
     content += section("Répartition entre les groupes hospitaliers (GHU)", f"""
         <div class="chart-grid-2">
@@ -692,17 +702,6 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         </div>
     """, "appareils")
 
-    content += section("Contexte régional", f"""
-        <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
-          Comparaison avec les autres types d'établissements de la région Île-de-France
-          (Cliniques, Centres Hospitaliers, CHU, PSPH).
-        </p>
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_reg_pts))}
-          {chart_card(fig_to_html(fig_reg_chir))}
-        </div>
-    """, "regional")
-
     # Survie et délais — tableau par appareil
     surv_table = survival_delay_table(surv, aphp, "AP-HP")
     lien_cmp = (
@@ -714,13 +713,17 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie", action=lien_cmp)
 
+    # Navigation par organe (en bas), en complément des liens par appareil
+    content += section("Rapports par organe", organe_nav_links_html(aphp), "nav-organes")
+
     nav = "\n".join([
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution globale</a>',
+        '<a href="#regional">Contexte régional</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
         '<a href="#appareils">Par appareil</a>',
-        '<a href="#regional">Contexte régional</a>',
         '<a href="#survie">Survie & Délais</a>',
+        '<a href="#nav-organes">Par organe</a>',
         '<a href="rapport_comparaison_hopitaux.html">Inter-hôpitaux</a>',
     ])
 
