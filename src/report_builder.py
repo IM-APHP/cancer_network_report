@@ -711,7 +711,6 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
                        surv_table, "survie", action=lien_cmp)
 
     nav = "\n".join([
-        '<a href="index.html">← Dashboard</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution globale</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
@@ -722,14 +721,14 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     ])
 
     html = _render_page(year_range,
-        title="Rapport d'activité cancérologie — AP-HP",
+        title="Cancérologie AP-HP — Tableau de bord",
         subtitle=f"Vue d'ensemble · {year_range} · Indicateurs OECI",
         nav_links=nav,
         content=content,
         date=datetime.now().strftime("%d/%m/%Y"),
     )
 
-    out = output_dir / "rapport_global_aphp.html"
+    out = output_dir / "index.html"   # page d'accueil (fusion de l'ancien index)
     out.write_text(html, encoding="utf-8")
     print(f"  → {out}")
     return out
@@ -799,8 +798,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     fig_delay = delay_evolution(aphp, ghu_name, "SEIN")
 
     nav = "\n".join([
-        '<a href="index.html">← Dashboard</a>',
-        '<a href="rapport_global_aphp.html">AP-HP Global</a>',
+        '<a href="index.html">← Accueil AP-HP</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution</a>',
         '<a href="#appareils">Par appareil</a>',
@@ -810,7 +808,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     # Bandeau inter-GHU (AP-HP + chaque GHU, GHU courant mis en évidence)
     content = ghu_switch_banner(
         ghu_name,
-        lambda e: "rapport_global_aphp.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
+        lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
         label="Naviguer",
     )
     content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
@@ -948,7 +946,7 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     )
 
     nav = "\n".join([
-        '<a href="rapport_global_aphp.html">← AP-HP Global</a>',
+        '<a href="index.html">← AP-HP Global</a>',
         f'<a href="#kpis">Indicateurs {last_year}</a>',
         '<a href="#evolution">Évolution</a>',
         '<a href="#organes">Par organe</a>',
@@ -1207,8 +1205,7 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
         nav_app.append(f'<a href="#{anchor}">{app.capitalize()}</a>')
 
     nav = "\n".join([
-        '<a href="index.html">← Dashboard</a>',
-        '<a href="rapport_global_aphp.html">Rapport global AP-HP</a>',
+        '<a href="index.html">← Accueil AP-HP</a>',
         '<a href="#global">Comparaison globale</a>',
     ] + nav_app)
 
@@ -1224,84 +1221,3 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
     print(f"  → {out}")
     return out
 
-
-# ── Page d'index ───────────────────────────────────────────────────────────────
-
-def build_index(data_dir: Path, output_dir: Path) -> Path:
-    aphp = load_aphp(data_dir)
-    reg  = load_regional(data_dir)
-    years_all = sorted(aphp["annee"].unique())
-    last_year = int(years_all[-1])
-    prev_year = int(years_all[-2])
-    year_range = f"{years_all[0]}–{years_all[-1]}"
-    lv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == last_year)].iloc[0]
-    pv = aphp[(aphp.entite == "AP-HP") & (aphp.appareil == "TOTAL") & (aphp.annee == prev_year)].iloc[0]
-
-    # ── KPI ──
-    kpis_html = '<div class="kpi-grid">'
-    kpis_html += kpi_card(f"Patients AP-HP {last_year}", lv.nb_patients, pv.nb_patients)
-    kpis_html += kpi_card("Nouveaux patients", lv.nb_nouveaux_patients, pv.nb_nouveaux_patients)
-    kpis_html += kpi_card("Séjours chirurgie", lv.nb_sejours_chirurgie, pv.nb_sejours_chirurgie)
-    kpis_html += kpi_card("Séjours chimiothérapie", lv.nb_sejours_chimiotherapie, pv.nb_sejours_chimiotherapie)
-    kpis_html += "</div>"
-
-    btn_global = (
-        '<a href="rapport_global_aphp.html" style="display:inline-block;background:#003189;'
-        'color:white;padding:9px 22px;border-radius:7px;text-decoration:none;'
-        'font-weight:600;font-size:.88rem;white-space:nowrap">Rapport complet AP-HP →</a>'
-    )
-
-    # ── Liens de navigation ──
-    organe_links = organe_nav_links_html(aphp)
-
-    # ── Assemblage ──
-    content = ""
-
-    # 1. KPI + bouton inline
-    content += section(
-        f"Indicateurs AP-HP {last_year}",
-        kpis_html,
-        "kpis",
-        action=btn_global,
-    )
-
-    # 2. GHU cards
-    content += section(
-        "Groupes Hospitaliers Universitaires",
-        ghu_nav_cards_html(),
-        "ghu",
-    )
-
-    # 3. Comparaison inter-hôpitaux (survie)
-    cmp_link = (
-        '<a href="rapport_comparaison_hopitaux.html" style="display:inline-block;'
-        'background:#003189;color:white;padding:10px 22px;border-radius:7px;'
-        'text-decoration:none;font-weight:600;font-size:.88rem">'
-        'Comparer les hôpitaux par survie →</a>'
-        '<p style="color:#6C757D;font-size:.85rem;margin-top:10px">'
-        'Survie à 5 ans par hôpital, groupée et colorée par GHU, avec repères AP-HP / GHU.</p>'
-    )
-    content += section("Comparaison inter-hôpitaux — Survie", cmp_link, "comparaison")
-
-    # 4. Navigation liens simples
-    content += section("Rapports par appareil / organe", organe_links, "nav-organes")
-
-    nav = "\n".join([
-        '<a href="#kpis">Indicateurs</a>',
-        '<a href="#ghu">Par GHU</a>',
-        '<a href="#comparaison">Inter-hôpitaux</a>',
-        '<a href="#nav-organes">Appareils / Organes</a>',
-    ])
-
-    html = _render_page(year_range,
-        title="Dashboard — Cancérologie AP-HP",
-        subtitle=f"Tableau de bord · Indicateurs OECI · {year_range}",
-        nav_links=nav,
-        content=content,
-        date=datetime.now().strftime("%d/%m/%Y"),
-    )
-
-    out = output_dir / "index.html"
-    out.write_text(html, encoding="utf-8")
-    print(f"  → {out}")
-    return out

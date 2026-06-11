@@ -26,7 +26,6 @@ import fill_fake_data
 from export_internes import exporter_csv
 from pivot_loader import mapping_hopital_ghu
 from report_builder import (
-    build_index,
     build_rapport_global,
     build_rapport_ghu,
     build_rapport_appareil,
@@ -83,10 +82,7 @@ def build_all_reports(fictif: bool = True):
 
     print("\n[Rapports HTML]")
 
-    print("\n  Page d'index...")
-    build_index(DATA_DIR, OUTPUT_DIR)
-
-    print("\n  Rapport global AP-HP...")
+    print("\n  Page d'accueil (global AP-HP → index.html)...")
     build_rapport_global(DATA_DIR, OUTPUT_DIR)
 
     print("\n  Comparaison inter-hôpitaux (survie)...")
