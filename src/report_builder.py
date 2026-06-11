@@ -250,6 +250,27 @@ def chart_grid(charts: list, cols: int = 2) -> str:
     return f'<div class="chart-grid-{cols}">{inner}</div>'
 
 
+def ghu_switch_banner(current: str, href_fn, label: str = "Voir par GHU") -> str:
+    """Bandeau de pastilles de navigation : AP-HP + chaque GHU, la courante mise en
+    évidence. ``href_fn(entite)`` renvoie l'URL de la version correspondante."""
+    pills = ""
+    for ent in ["AP-HP"] + GHU_LIST:
+        actif = ent == current
+        style = ("background:#003189;color:#fff" if actif
+                 else "background:#fff;color:#003189;border:1px solid #C5D0E6")
+        pills += (
+            f'<a href="{href_fn(ent)}" style="display:inline-block;margin:3px 4px;'
+            f'padding:5px 13px;border-radius:14px;text-decoration:none;font-size:.82rem;'
+            f'font-weight:600;{style}">{ent}</a>'
+        )
+    return (
+        '<div style="margin-bottom:22px;padding:10px 14px;background:#F8F9FA;'
+        'border:1px solid #E9ECEF;border-radius:10px">'
+        f'<span style="font-size:.78rem;color:#6C757D;margin-right:6px">{label} :</span>'
+        f'{pills}</div>'
+    )
+
+
 # ── Helpers réutilisables ──────────────────────────────────────────────────────
 
 def ghu_nav_cards_html() -> str:
@@ -281,10 +302,14 @@ def _appareils_affichables(df: pd.DataFrame) -> list:
             if a != APPAREIL_RESIDUEL]
 
 
-def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_organe_") -> str:
+def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_organe_",
+                          ghu: str = None) -> str:
     """Liens vers rapports organe, regroupés par appareil. L'appareil résiduel est
     exclu de la liste générale et ajouté séparément en fin de section (son rapport
-    reste accessible)."""
+    reste accessible). Si ``ghu`` est fourni, pointe vers les versions GHU
+    (rapport_*_<ghu>.html) ; sinon vers les versions AP-HP."""
+    suffixe = f"_{slugify(ghu)}" if ghu else ""
+
     def _bloc(app: str, force: bool = False) -> str:
         app_slug = slugify(app)
         orgs = sorted(
@@ -295,13 +320,13 @@ def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_orga
             return ""
         out = (
             f'<div style="margin-bottom:14px">'
-            f'<a href="rapport_appareil_{app_slug}.html" style="font-weight:700;'
+            f'<a href="rapport_appareil_{app_slug}{suffixe}.html" style="font-weight:700;'
             f'color:#003189;font-size:.9rem;text-decoration:none">{app} →</a><br>'
         )
         for org in orgs:
             org_slug = slugify(org)
             out += (
-                f'<a href="{anchor_prefix}{org_slug}.html" style="display:inline-block;'
+                f'<a href="{anchor_prefix}{org_slug}{suffixe}.html" style="display:inline-block;'
                 f'margin:2px 6px;color:#457B9D;font-size:.82rem">{org} →</a>'
             )
         return out + "</div>"
@@ -782,7 +807,12 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
         '<a href="#survie">Survie & Délais</a>',
     ])
 
-    content = ""
+    # Bandeau inter-GHU (AP-HP + chaque GHU, GHU courant mis en évidence)
+    content = ghu_switch_banner(
+        ghu_name,
+        lambda e: "rapport_global_aphp.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
+        label="Naviguer",
+    )
     content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
     content += section("Évolution — Patients", f"""
         <div class="chart-grid-2">
@@ -802,11 +832,16 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
             f'<a href="rapport_appareil_{app_s}_{ghu_s}.html" style="display:inline-block;'
             f'margin:3px 8px;color:#457B9D;font-size:.85rem">{app} →</a>'
         )
+    organe_links_ghu = organe_nav_links_html(aphp, ghu=ghu_name)
     content += section("Analyse par appareil", f"""
         {chart_card(tbl_appareils, "full")}
         <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
           <strong style="color:#003189">Rapports par appareil :</strong><br>
           {app_links_ghu}
+        </div>
+        <div style="margin-top:14px;padding:14px;background:#F8F9FA;border-radius:8px">
+          <strong style="color:#003189">Rapports par organe ({ghu_name}) :</strong><br>
+          {organe_links_ghu}
         </div>
     """, "appareils")
     surv_table = survival_delay_table(surv, aphp, ghu_name)
@@ -904,12 +939,13 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     fig_reg = regional_comparison(reg_app, "nb_patients",
                                   f"Contexte régional — {appareil}")
 
-    # Navigation links — liens vers versions GHU
-    ghu_links = ""
-    for ghu in GHU_LIST:
-        ghu_slug = slugify(ghu)
-        app_slug = slugify(appareil)
-        ghu_links += f'<a href="rapport_appareil_{app_slug}_{ghu_slug}.html" style="margin:0 6px;color:#003189;font-size:.85rem">{ghu}</a>'
+    # Bandeau d'accès aux versions GHU (promu en HAUT de page)
+    _app_slug = slugify(appareil)
+    ghu_banner = ghu_switch_banner(
+        entity,
+        lambda e: (f"rapport_appareil_{_app_slug}.html" if e == "AP-HP"
+                   else f"rapport_appareil_{_app_slug}_{slugify(e)}.html"),
+    )
 
     nav = "\n".join([
         '<a href="rapport_global_aphp.html">← AP-HP Global</a>',
@@ -921,7 +957,7 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         '<a href="#regional">Contexte régional</a>',
     ])
 
-    content = ""
+    content = ghu_banner
     content += section(f"Indicateurs clés — {appareil} — {last_year}", kpis_html, "kpis")
     content += section("Évolution du nombre de patients", f"""
         <div class="chart-grid-2">
@@ -970,9 +1006,6 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
           {chart_card(fig_to_html(fig_delay_cmp))}
         </div>
     """, "delais")
-
-    if entity == "AP-HP":
-        content += f'<div style="margin-top:16px;padding:16px;background:#F8F9FA;border-radius:8px"><strong>Voir aussi par GHU :</strong> {ghu_links}</div>'
 
     html = _render_page(year_range,
         title=f"Rapport — {appareil}" + (f" — {entity}" if entity != "AP-HP" else ""),
@@ -1068,11 +1101,12 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     app_slug = slugify(appareil)
     org_slug = slugify(organe)
 
-    # GHU links
-    ghu_links = ""
-    for ghu in GHU_LIST:
-        ghu_slug = slugify(ghu)
-        ghu_links += f'<a href="rapport_organe_{org_slug}_{ghu_slug}.html" style="margin:0 6px;color:#003189;font-size:.85rem">{ghu}</a>'
+    # Bandeau d'accès aux versions GHU (promu en HAUT de page)
+    ghu_banner = ghu_switch_banner(
+        entity,
+        lambda e: (f"rapport_organe_{org_slug}.html" if e == "AP-HP"
+                   else f"rapport_organe_{org_slug}_{slugify(e)}.html"),
+    )
 
     nav = "\n".join([
         f'<a href="rapport_appareil_{app_slug}.html">← {appareil}</a>',
@@ -1083,7 +1117,7 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         '<a href="#regional">Contexte régional</a>',
     ])
 
-    content = ""
+    content = ghu_banner
     content += section(f"Indicateurs clés — {organe} — {last_year}", kpis_html, "kpis")
     content += section("Évolution", f"""
         <div class="chart-grid-2">
@@ -1103,9 +1137,6 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     """, "survie")
     content += section("Délais de prise en charge",
                        chart_card(fig_to_html(fig_delay)), "delais")
-
-    if entity == "AP-HP":
-        content += f'<div style="margin-top:16px;padding:16px;background:#F8F9FA;border-radius:8px"><strong>Voir aussi par GHU :</strong> {ghu_links}</div>'
 
     html = _render_page(year_range,
         title=f"Rapport — {organe}" + (f" — {entity}" if entity != "AP-HP" else ""),
