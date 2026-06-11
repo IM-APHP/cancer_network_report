@@ -683,21 +683,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
     )
 
-    content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
-
-    content += section("Évolution globale du nombre de patients", f"""
-        {covid_note}
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_pts))}
-          {chart_card(fig_to_html(fig_new))}
-        </div>
-        <div class="chart-grid-2" style="margin-top:20px">
-          {chart_card(fig_to_html(fig_wf))}
-          {chart_card(fig_to_html(fig_sejours))}
-        </div>
-    """, "evolution")
-
-    # Contexte régional — remonté juste après l'Évolution ; patients + donut par type
+    # Contexte régional — PREMIÈRE section (tout en haut), avant les indicateurs clés
     content += section("Contexte régional", f"""
         <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
           Comparaison avec les autres types d'établissements de la région Île-de-France
@@ -708,6 +694,16 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
           {chart_card(fig_to_html(fig_reg_donut))}
         </div>
     """, "regional")
+
+    content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
+
+    content += section("Évolution globale du nombre de patients", f"""
+        {covid_note}
+        <div class="chart-grid-2">
+          {chart_card(fig_to_html(fig_wf))}
+          {chart_card(fig_to_html(fig_sejours))}
+        </div>
+    """, "evolution")
 
     content += section("Répartition entre les groupes hospitaliers (GHU)", f"""
         <div class="chart-grid-2">
@@ -727,10 +723,6 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     content += section("Analyse par appareil", f"""
         {chart_card(fig_to_html(fig_bar_app), "full")}
         {chart_card(tbl_appareils, "full")}
-        <div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px">
-          <strong style="color:#003189">Rapports par appareil :</strong><br>
-          {app_links_global}
-        </div>
     """, "appareils")
 
     # Survie et délais — tableau par appareil
@@ -744,13 +736,15 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie", action=lien_cmp)
 
-    # Navigation par organe (en bas), en complément des liens par appareil
+    # Navigation bas de page : rapports par appareil + par organe
+    content += section("Rapports par appareil",
+                       f'<div style="line-height:2.2">{app_links_global}</div>', "nav-appareils")
     content += section("Rapports par organe", organe_nav_links_html(aphp), "nav-organes")
 
     nav = "\n".join([
+        '<a href="#regional">Contexte régional</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution globale</a>',
-        '<a href="#regional">Contexte régional</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
         '<a href="#appareils">Par appareil</a>',
         '<a href="#survie">Survie & Délais</a>',
@@ -798,16 +792,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     kpis_html += kpi_card("Séjours radiothérapie", lv.nb_sejours_radiotherapie, pv.nb_sejours_radiotherapie)
     kpis_html += "</div>"
 
-    # Graphiques
-    compare = pd.concat([ghu_total, aphp_total])
-    fig_pts = line_evolution(compare, "annee", "nb_patients", "entite",
-                             f"Patients — {ghu_name} vs AP-HP",
-                             entities=[ghu_name, "AP-HP"])
-    fig_new = line_evolution(compare, "annee", "nb_nouveaux_patients", "entite",
-                             f"Nouveaux patients — {ghu_name} vs AP-HP",
-                             entities=[ghu_name, "AP-HP"])
-
-    # Part de marché de ce GHU (alignement sur les années communes)
+    # Graphiques — Part de marché de ce GHU (alignement sur les années communes)
     aphp_pts = aphp_total.set_index("annee")["nb_patients"]
     share_data = ghu_total.copy()
     share_data["part_marche"] = share_data.apply(
@@ -853,10 +838,6 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
     content += section("Évolution — Patients", f"""
         <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_pts))}
-          {chart_card(fig_to_html(fig_new))}
-        </div>
-        <div class="chart-grid-2" style="margin-top:20px">
           {chart_card(fig_to_html(fig_share))}
           {chart_card(fig_to_html(fig_sejours))}
         </div>
