@@ -814,6 +814,15 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
                                  f"Séjours par mode de prise en charge — {ghu_name}",
                                  entities=list(TREATMENT_COLS.values()))
 
+    # Répartition entre tous les GHU de l'AP-HP (identique au rapport AP-HP)
+    ghu_total_all = aphp[(aphp.entite.isin(GHU_LIST)) & (aphp.appareil == "TOTAL")]
+    fig_repart_donut = donut_market_share(
+        ghu_total_all[ghu_total_all.annee == last_year], "entite", "nb_patients",
+        f"Répartition par GHU — {last_year}")
+    fig_repart_bar = bar_comparison(ghu_total_all, "annee", "nb_patients", "entite",
+                                    "Patients par GHU — évolution", barmode="group",
+                                    entities=GHU_LIST)
+
     # Tableau chiffré par appareil (remplace la heatmap)
     tbl_appareils = appareil_counts_table(aphp, ghu_name)
 
@@ -823,6 +832,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
 
     nav = "\n".join([
         '<a href="index.html">← Accueil AP-HP</a>',
+        '<a href="#repartition">Répartition GHU</a>',
         '<a href="#kpis">Indicateurs clés</a>',
         '<a href="#evolution">Évolution</a>',
         '<a href="#appareils">Par appareil</a>',
@@ -836,6 +846,12 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
         lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
         label="Naviguer",
     )
+    content += section("Répartition entre les groupes hospitaliers (GHU)", f"""
+        <div class="chart-grid-2">
+          {chart_card(fig_to_html(fig_repart_donut))}
+          {chart_card(fig_to_html(fig_repart_bar))}
+        </div>
+    """, "repartition")
     content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
     content += section("Évolution — Patients", f"""
         <div class="chart-grid-2">
