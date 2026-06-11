@@ -418,19 +418,22 @@ _SEJOUR_COLS = ["nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
                 "nb_sejours_radiotherapie", "nb_sejours_palliatifs"]
 
 
-def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None) -> str:
-    """Tableau chiffré par appareil (remplace la heatmap d'évolution) : lignes =
-    appareils, colonnes = années, deux blocs « Nb patients » et « Nb séjours ».
-    « Nb séjours » = somme chirurgie+chimio+radio+palliatifs (le format interne n'a
-    pas de mesure « séjours totaux »). Style aligné sur « Survie et délais »."""
-    if years is None:
-        years = sorted(aphp_df["annee"].unique())
-    appareils = _appareils_affichables(aphp_df)
-    n = len(years)
+def _ligne_pat_sej(row):
+    """(nb_patients, nb_séjours) d'une ligne interne. nb_séjours = somme des 4
+    mesures de séjours (pas de « séjours totaux » dans la source)."""
+    r = row.iloc[0]
+    return (int(r["nb_patients"]),
+            int(sum(int(r[c]) for c in _SEJOUR_COLS if c in row.columns)))
 
+
+def _counts_table_html(first_col: str, items: list, value_fn, years: list) -> str:
+    """Rendu commun du tableau chiffré (blocs « Nb patients » / « Nb séjours » par
+    année). ``value_fn(item, annee)`` renvoie ``(pat, sej)`` ou ``None`` si absent.
+    Style aligné sur le tableau « Survie et délais »."""
+    n = len(years)
     head = (
         "<tr>"
-        f'<th rowspan="2" style="text-align:left;min-width:190px;padding:8px">Appareil</th>'
+        f'<th rowspan="2" style="text-align:left;min-width:190px;padding:8px">{first_col}</th>'
         f'<th colspan="{n}" style="background:#E8F4F8;padding:6px">Nb patients</th>'
         f'<th colspan="{n}" style="background:#FFF3E0;padding:6px">Nb séjours</th>'
         "</tr><tr>"
@@ -438,26 +441,20 @@ def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None
         + "".join(f'<th style="background:#FFF3E0;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
         + "</tr>"
     )
-
     body = ""
-    for app in appareils:
+    for it in items:
         pat_cells = ""
         sej_cells = ""
         for yr in years:
-            row = aphp_df[(aphp_df.entite == entity) & (aphp_df.appareil == app)
-                          & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)]
-            if not row.empty:
-                r = row.iloc[0]
-                pat = int(r["nb_patients"])
-                sej = int(sum(int(r[c]) for c in _SEJOUR_COLS if c in row.columns))
+            v = value_fn(it, yr)
+            if v is not None:
+                pat, sej = v
                 pat_cells += f'<td style="text-align:center;padding:5px 6px">{fmt_nb(pat)}</td>'
                 sej_cells += f'<td style="text-align:center;padding:5px 6px">{fmt_nb(sej)}</td>'
             else:
                 pat_cells += '<td style="text-align:center">—</td>'
                 sej_cells += '<td style="text-align:center">—</td>'
-        short = app[:40]
-        body += f'<tr><td style="font-size:.82rem;padding:6px 8px">{short}</td>{pat_cells}{sej_cells}</tr>'
-
+        body += f'<tr><td style="font-size:.82rem;padding:6px 8px">{str(it)[:40]}</td>{pat_cells}{sej_cells}</tr>'
     return (
         '<div style="overflow-x:auto">'
         '<table style="border-collapse:collapse;width:100%;font-size:.83rem;border:1px solid #DEE2E6">'
@@ -468,6 +465,40 @@ def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None
         '« Nb séjours » = somme chirurgie + chimiothérapie + radiothérapie + soins palliatifs '
         '(pas de mesure « séjours totaux » dans la source).</p>'
     )
+
+
+def appareil_counts_table(aphp_df: pd.DataFrame, entity: str, years: list = None) -> str:
+    """Tableau chiffré par appareil (remplace la heatmap d'évolution) : lignes =
+    appareils (hors résiduel/TOTAL), colonnes = années, blocs Nb patients / séjours."""
+    if years is None:
+        years = sorted(aphp_df["annee"].unique())
+
+    def vf(app, yr):
+        row = aphp_df[(aphp_df.entite == entity) & (aphp_df.appareil == app)
+                      & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)]
+        return None if row.empty else _ligne_pat_sej(row)
+
+    return _counts_table_html("Appareil", _appareils_affichables(aphp_df), vf, years)
+
+
+def organe_counts_table(aphp_df: pd.DataFrame, entity: str, appareil: str,
+                        years: list = None) -> str:
+    """Tableau chiffré par organe (remplace heatmap_organes) pour un appareil :
+    lignes = organes (sentinelle « TOTAL » filtrée), colonnes = années, blocs
+    Nb patients / Nb séjours."""
+    if years is None:
+        years = sorted(aphp_df["annee"].unique())
+    organes = sorted(
+        aphp_df[(aphp_df.entite == entity) & (aphp_df.appareil == appareil)
+                & (aphp_df.organe != "TOTAL")].organe.unique()
+    )
+
+    def vf(org, yr):
+        row = aphp_df[(aphp_df.entite == entity) & (aphp_df.appareil == appareil)
+                      & (aphp_df.organe == org) & (aphp_df.annee == yr)]
+        return None if row.empty else _ligne_pat_sej(row)
+
+    return _counts_table_html("Organe", organes, vf, years)
 
 
 # ── Loaders ────────────────────────────────────────────────────────────────────
@@ -925,9 +956,8 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
                                  f"Séjours par mode de PEC — {appareil}",
                                  entities=list(TREATMENT_COLS.values()))
 
-    # Organes
-    fig_heat_org = heatmap_organes(aphp, entity, appareil,
-                                    title=f"Évolution par organe — {appareil} — {entity}")
+    # Organes — tableau chiffré (remplace heatmap_organes) + treemap
+    tbl_organes = organe_counts_table(aphp, entity, appareil)
     fig_tree = treemap_organes(aphp, entity, appareil, last_year)
 
     # Survie
@@ -943,6 +973,11 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     reg_app = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
     fig_reg = regional_comparison(reg_app, "nb_patients",
                                   f"Contexte régional — {appareil}")
+    reg_app_last = reg_app[reg_app.annee == last_year]
+    fig_reg_donut = donut_market_share(
+        reg_app_last, "entite", "nb_patients",
+        f"Parts de marché régional — {appareil} ({last_year})",
+        entities=sorted(reg_app_last["entite"].unique()))
 
     # Bandeau d'accès aux versions GHU (promu en HAUT de page)
     _app_slug = slugify(appareil)
@@ -964,7 +999,17 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
 
     content = ghu_banner
     content += section(f"Indicateurs clés — {appareil} — {last_year}", kpis_html, "kpis")
-    content += section("Évolution du nombre de patients", f"""
+    if entity == "AP-HP":
+        # AP-HP : Évolution = contexte RÉGIONAL uniquement (+ séjours par mode conservés)
+        evo_html = f"""
+        <div class="chart-grid-2">
+          {chart_card(fig_to_html(fig_reg))}
+          {chart_card(fig_to_html(fig_reg_donut))}
+        </div>
+        <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
+        """
+    else:
+        evo_html = f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_pts))}
           {chart_card(fig_to_html(fig_donut))}
@@ -973,7 +1018,8 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
           {chart_card(fig_to_html(fig_sejours))}
           {chart_card(fig_to_html(fig_reg))}
         </div>
-    """, "evolution")
+        """
+    content += section("Évolution du nombre de patients", evo_html, "evolution")
     # Liens organes pour cet appareil
     app_slug_local = slugify(appareil)
     orgs_of_app = sorted(
@@ -993,10 +1039,8 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         'text-decoration:none;white-space:nowrap">→ Tous les organes</a>'
     )
     content += section("Analyse par organe", f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_heat_org))}
-          {chart_card(fig_to_html(fig_tree))}
-        </div>
+        {chart_card(tbl_organes, "full")}
+        <div style="margin-top:20px">{chart_card(fig_to_html(fig_tree), "full")}</div>
         {f'<div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px"><strong style="color:#003189">Organes — {appareil} :</strong><br>{org_links_html}</div>' if org_links_html else ''}
     """, "organes", action=organes_action)
     content += section("Survie par stade", f"""
@@ -1102,6 +1146,11 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         reg_org = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
     fig_reg = regional_comparison(reg_org, "nb_patients",
                                   f"Contexte régional — {organe}")
+    reg_org_last = reg_org[reg_org.annee == last_year]
+    fig_reg_donut = donut_market_share(
+        reg_org_last, "entite", "nb_patients",
+        f"Parts de marché régional — {organe} ({last_year})",
+        entities=sorted(reg_org_last["entite"].unique()))
 
     app_slug = slugify(appareil)
     org_slug = slugify(organe)
@@ -1124,7 +1173,17 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
 
     content = ghu_banner
     content += section(f"Indicateurs clés — {organe} — {last_year}", kpis_html, "kpis")
-    content += section("Évolution", f"""
+    if entity == "AP-HP":
+        # AP-HP : Évolution = contexte RÉGIONAL uniquement (+ séjours par mode conservés)
+        evo_html = f"""
+        <div class="chart-grid-2">
+          {chart_card(fig_to_html(fig_reg))}
+          {chart_card(fig_to_html(fig_reg_donut))}
+        </div>
+        <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
+        """
+    else:
+        evo_html = f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_pts))}
           {chart_card(fig_to_html(fig_donut))}
@@ -1133,7 +1192,8 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
           {chart_card(fig_to_html(fig_sejours))}
           {chart_card(fig_to_html(fig_reg))}
         </div>
-    """, "evolution")
+        """
+    content += section("Évolution", evo_html, "evolution")
     content += section("Survie par stade", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_surv))}
