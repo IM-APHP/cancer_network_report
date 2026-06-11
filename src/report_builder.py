@@ -819,9 +819,8 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     fig_repart_donut = donut_market_share(
         ghu_total_all[ghu_total_all.annee == last_year], "entite", "nb_patients",
         f"Répartition par GHU — {last_year}")
-    fig_repart_bar = bar_comparison(ghu_total_all, "annee", "nb_patients", "entite",
-                                    "Patients par GHU — évolution", barmode="group",
-                                    entities=GHU_LIST)
+    fig_repart_lines = line_evolution(ghu_total_all, "annee", "nb_patients", "entite",
+                                      "Patients par GHU — évolution", entities=GHU_LIST)
 
     # Tableau chiffré par appareil (remplace la heatmap)
     tbl_appareils = appareil_counts_table(aphp, ghu_name)
@@ -849,7 +848,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     content += section("Répartition entre les groupes hospitaliers (GHU)", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_repart_donut))}
-          {chart_card(fig_to_html(fig_repart_bar))}
+          {chart_card(fig_to_html(fig_repart_lines))}
         </div>
     """, "repartition")
     content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
