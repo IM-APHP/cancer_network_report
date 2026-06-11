@@ -898,6 +898,22 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     return out
 
 
+def _market_share_evolution(ent_df: pd.DataFrame, aphp_df: pd.DataFrame,
+                            entity: str, libelle: str):
+    """Courbe d'évolution de la part de marché d'un GHU dans l'AP-HP :
+    nb_patients(GHU) / nb_patients(AP-HP) × 100, par année, sur le périmètre donné."""
+    aphp_pts = aphp_df.set_index("annee")["nb_patients"]
+    d = ent_df[["annee", "nb_patients"]].copy()
+    d["part_marche"] = [
+        (nb / aphp_pts[an] * 100) if (an in aphp_pts.index and aphp_pts[an]) else None
+        for an, nb in zip(d["annee"], d["nb_patients"])
+    ]
+    d["entite"] = entity
+    return line_evolution(d, "annee", "part_marche", "entite",
+                          f"Part de marché de {entity} dans l'AP-HP — {libelle} (%)",
+                          entities=[entity])
+
+
 # ── Rapport par appareil ───────────────────────────────────────────────────────
 
 def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
@@ -937,12 +953,6 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     kpis_html += "</div>"
 
     # Charts patients
-    compare_ents = [entity] if entity != "AP-HP" else []
-    compare_ents += ["AP-HP"] if entity != "AP-HP" else []
-    all_ents = pd.concat([ent_app] + ([aphp_app] if entity != "AP-HP" else []))
-    fig_pts = line_evolution(all_ents, "annee", "nb_patients", "entite",
-                             f"Patients — {appareil}", entities=[entity] + (["AP-HP"] if entity != "AP-HP" else []))
-
     ghu_app = app_data[app_data.entite.isin(GHU_LIST)]
     ghu_last = ghu_app[ghu_app.annee == last_year]
     fig_donut = donut_market_share(ghu_last, "entite", "nb_patients",
@@ -993,7 +1003,6 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         '<a href="#organes">Par organe</a>',
         '<a href="#survie">Survie</a>',
         '<a href="#delais">Délais</a>',
-        '<a href="#regional">Contexte régional</a>',
     ])
 
     content = ghu_banner
@@ -1008,14 +1017,18 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
         """
     else:
+        # GHU : patients = TOUS les GHU ; part de marché du GHU dans l'AP-HP ; pas de régional
+        fig_pts_ghu = line_evolution(ghu_app, "annee", "nb_patients", "entite",
+                                     f"Patients par GHU — {appareil}", entities=GHU_LIST)
+        fig_market = _market_share_evolution(ent_app, aphp_app, entity, appareil)
         evo_html = f"""
         <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_pts))}
+          {chart_card(fig_to_html(fig_pts_ghu))}
           {chart_card(fig_to_html(fig_donut))}
         </div>
         <div class="chart-grid-2" style="margin-top:20px">
           {chart_card(fig_to_html(fig_sejours))}
-          {chart_card(fig_to_html(fig_reg))}
+          {chart_card(fig_to_html(fig_market))}
         </div>
         """
     content += section("Évolution du nombre de patients", evo_html, "evolution")
@@ -1110,12 +1123,8 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         kpis_html += kpi_card("Délai médian (j)", int(lv.delai_global_median), int(pv.delai_global_median), invert=True)
     kpis_html += "</div>"
 
-    # Patients GHU comparison
+    # Patients GHU
     ghu_org = org_data[org_data.entite.isin(GHU_LIST)]
-    all_ents = pd.concat([aphp_org, ghu_org])
-    fig_pts = line_evolution(all_ents, "annee", "nb_patients", "entite",
-                             f"Patients — {organe}", entities=[entity] + (GHU_LIST if entity == "AP-HP" else ["AP-HP"]))
-
     ghu_last = ghu_org[ghu_org.annee == last_year]
     fig_donut = donut_market_share(ghu_last, "entite", "nb_patients",
                                    f"Répartition GHU — {organe} ({last_year})")
@@ -1167,7 +1176,6 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         '<a href="#evolution">Évolution</a>',
         '<a href="#survie">Survie</a>',
         '<a href="#delais">Délais</a>',
-        '<a href="#regional">Contexte régional</a>',
     ])
 
     content = ghu_banner
@@ -1182,14 +1190,18 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
         """
     else:
+        # GHU : patients = TOUS les GHU ; part de marché du GHU dans l'AP-HP ; pas de régional
+        fig_pts_ghu = line_evolution(ghu_org, "annee", "nb_patients", "entite",
+                                     f"Patients par GHU — {organe}", entities=GHU_LIST)
+        fig_market = _market_share_evolution(ent_org, aphp_org, entity, organe)
         evo_html = f"""
         <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_pts))}
+          {chart_card(fig_to_html(fig_pts_ghu))}
           {chart_card(fig_to_html(fig_donut))}
         </div>
         <div class="chart-grid-2" style="margin-top:20px">
           {chart_card(fig_to_html(fig_sejours))}
-          {chart_card(fig_to_html(fig_reg))}
+          {chart_card(fig_to_html(fig_market))}
         </div>
         """
     content += section("Évolution", evo_html, "evolution")
