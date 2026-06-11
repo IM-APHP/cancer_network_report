@@ -34,6 +34,17 @@ COLORS = {
     "secondary": "#E63946",
 }
 
+# Palette DÉDIÉE aux graphiques régionaux (donut + comparaison) : couleurs propres
+# aux types d'établissement, sans recolorer l'AP-HP des autres rapports (GHU…).
+REGIONAL_COLORS = {
+    "AP-HP":    "#377EB8",
+    "PSPH":     "darkgreen",
+    "CH":       "#984EA3",
+    "Clinique": "#E41A1C",
+    "CLCC":     "#FFFF33",
+    "CHU":      "#45B7D1",   # non spécifié (absent du fictif) — valeur de repli
+}
+
 TREATMENT_COLS = {
     "nb_sejours_chirurgie":       "Chirurgie",
     "nb_sejours_chimiotherapie":  "Chimiothérapie",
@@ -209,8 +220,10 @@ def donut_market_share(
     value_col: str,
     title: str,
     entities: list = None,
+    color_map: dict = None,
 ) -> go.Figure:
-    """Camembert/donut pour les parts de marché."""
+    """Camembert/donut pour les parts de marché.
+    ``color_map`` (optionnel) surcharge la couleur par entité."""
     ents = entities or GHU_LIST
     d = df_year[df_year[entity_col].isin(ents)].copy()
     total = d[value_col].sum()
@@ -219,7 +232,7 @@ def donut_market_share(
         labels=d[entity_col],
         values=d[value_col],
         hole=0.55,
-        marker_colors=[get_color(e) for e in d[entity_col]],
+        marker_colors=[(color_map or {}).get(e) or get_color(e) for e in d[entity_col]],
         textinfo="label+percent",
         hovertemplate="<b>%{label}</b><br>%{value:,.0f} patients<br>%{percent}<extra></extra>",
         sort=True,
@@ -366,13 +379,18 @@ def regional_comparison(
     y_col: str,
     title: str,
     highlight: str = "AP-HP",
+    color_map: dict = None,
 ) -> go.Figure:
-    """Comparaison AP-HP vs autres types d'établissements régionaux."""
+    """Comparaison AP-HP vs autres types d'établissements régionaux.
+    ``color_map`` (optionnel) surcharge la couleur par type d'établissement."""
     fig = go.Figure()
     etab_col = "entite" if "entite" in df_reg.columns else "type_etab"
     # Agrégation au cas où plusieurs lignes par (entite, annee)
     df_reg = df_reg.groupby([etab_col, "annee"], as_index=False)[y_col].sum()
     types = sorted(df_reg[etab_col].unique())
+
+    def _col(t):
+        return (color_map or {}).get(t) or get_color(t)
 
     for t in types:
         d = df_reg[df_reg[etab_col] == t].sort_values("annee")
@@ -382,8 +400,8 @@ def regional_comparison(
             x=d["annee"], y=d[y_col],
             name=t,
             mode="lines+markers",
-            line=dict(color=get_color(t), width=width, dash=dash),
-            marker=dict(size=7, color=get_color(t)),
+            line=dict(color=_col(t), width=width, dash=dash),
+            marker=dict(size=7, color=_col(t)),
             hovertemplate=f"<b>{t}</b><br>%{{y:,.0f}}<extra></extra>",
         ))
 

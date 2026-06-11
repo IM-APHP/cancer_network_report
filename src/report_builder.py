@@ -26,7 +26,7 @@ from chart_utils import (
     delay_evolution, delay_comparison_bar,
     bar_appareils_years,
     slugify,
-    GHU_LIST, TREATMENT_COLS,
+    GHU_LIST, TREATMENT_COLS, REGIONAL_COLORS,
 )
 from referentiels import APPAREIL_RESIDUEL
 
@@ -663,7 +663,8 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     # ── Contexte régional ──
     reg_total = reg[(reg.appareil == "TOTAL")]
     fig_reg_pts = regional_comparison(reg_total, "nb_patients",
-                                      "Patients — AP-HP vs contexte régional")
+                                      "Patients — AP-HP vs contexte régional",
+                                      color_map=REGIONAL_COLORS)
     reg_total_last = reg[(reg.appareil == "TOTAL") & (reg.organe == "TOTAL")
                          & (reg.annee == last_year)]
     # entities = types d'établissement (sinon donut_market_share filtre sur GHU_LIST par défaut)
@@ -671,7 +672,7 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     fig_reg_donut = donut_market_share(
         reg_total_last, "entite", "nb_patients",
         f"Répartition de l'activité par type d'établissement — {last_year}",
-        entities=types_etab)
+        entities=types_etab, color_map=REGIONAL_COLORS)
 
     # ── Graphique patients par appareil ──
     fig_bar_app = bar_appareils_years(aphp)
@@ -683,7 +684,9 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
     )
 
-    # Contexte régional — PREMIÈRE section (tout en haut), avant les indicateurs clés
+    content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
+
+    # Contexte régional — juste sous les indicateurs clés
     content += section("Contexte régional", f"""
         <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
           Comparaison avec les autres types d'établissements de la région Île-de-France
@@ -694,8 +697,6 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
           {chart_card(fig_to_html(fig_reg_donut))}
         </div>
     """, "regional")
-
-    content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
 
     content += section("Évolution globale du nombre de patients", f"""
         {covid_note}
@@ -742,8 +743,8 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     content += section("Rapports par organe", organe_nav_links_html(aphp), "nav-organes")
 
     nav = "\n".join([
-        '<a href="#regional">Contexte régional</a>',
         '<a href="#kpis">Indicateurs clés</a>',
+        '<a href="#regional">Contexte régional</a>',
         '<a href="#evolution">Évolution globale</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
         '<a href="#appareils">Par appareil</a>',
@@ -962,12 +963,13 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     # Contexte régional
     reg_app = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
     fig_reg = regional_comparison(reg_app, "nb_patients",
-                                  f"Contexte régional — {appareil}")
+                                  f"Contexte régional — {appareil}",
+                                  color_map=REGIONAL_COLORS)
     reg_app_last = reg_app[reg_app.annee == last_year]
     fig_reg_donut = donut_market_share(
         reg_app_last, "entite", "nb_patients",
         f"Parts de marché régional — {appareil} ({last_year})",
-        entities=sorted(reg_app_last["entite"].unique()))
+        entities=sorted(reg_app_last["entite"].unique()), color_map=REGIONAL_COLORS)
 
     # Bandeau d'accès aux versions GHU (promu en HAUT de page)
     _app_slug = slugify(appareil)
@@ -1134,12 +1136,13 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     if reg_org.empty:
         reg_org = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
     fig_reg = regional_comparison(reg_org, "nb_patients",
-                                  f"Contexte régional — {organe}")
+                                  f"Contexte régional — {organe}",
+                                  color_map=REGIONAL_COLORS)
     reg_org_last = reg_org[reg_org.annee == last_year]
     fig_reg_donut = donut_market_share(
         reg_org_last, "entite", "nb_patients",
         f"Parts de marché régional — {organe} ({last_year})",
-        entities=sorted(reg_org_last["entite"].unique()))
+        entities=sorted(reg_org_last["entite"].unique()), color_map=REGIONAL_COLORS)
 
     app_slug = slugify(appareil)
     org_slug = slugify(organe)
