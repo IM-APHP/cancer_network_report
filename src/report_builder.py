@@ -250,7 +250,7 @@ def chart_grid(charts: list, cols: int = 2) -> str:
     return f'<div class="chart-grid-{cols}">{inner}</div>'
 
 
-def ghu_switch_banner(current: str, href_fn, label: str = "Voir par GHU") -> str:
+def ghu_switch_banner(current: str, href_fn, label: str = "Naviguer") -> str:
     """Bandeau de pastilles de navigation : AP-HP + chaque GHU, la courante mise en
     évidence. ``href_fn(entite)`` renvoie l'URL de la version correspondante."""
     pills = ""
@@ -640,7 +640,11 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     fig_bar_app = bar_appareils_years(aphp)
 
     # ── Assembly HTML ──
-    content = ""
+    # Bandeau inter-GHU uniforme (AP-HP courant mis en évidence)
+    content = ghu_switch_banner(
+        "AP-HP",
+        lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
+    )
 
     # GHU liens sobres
     ghu_links_global = " &nbsp;|&nbsp; ".join(
