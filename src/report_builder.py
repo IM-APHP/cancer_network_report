@@ -831,8 +831,8 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
 
     nav = "\n".join([
         '<a href="index.html">← Accueil AP-HP</a>',
-        '<a href="#repartition">Répartition GHU</a>',
         '<a href="#kpis">Indicateurs clés</a>',
+        '<a href="#repartition">Répartition GHU</a>',
         '<a href="#evolution">Évolution</a>',
         '<a href="#appareils">Par appareil</a>',
         '<a href="#survie">Survie & Délais</a>',
@@ -845,13 +845,13 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
         lambda e: "index.html" if e == "AP-HP" else f"rapport_{slugify(e)}.html",
         label="Naviguer",
     )
+    content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
     content += section("Répartition entre les groupes hospitaliers (GHU)", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_repart_donut))}
           {chart_card(fig_to_html(fig_repart_lines))}
         </div>
     """, "repartition")
-    content += section(f"Indicateurs clés — {last_year}", kpis_html, "kpis")
     content += section("Évolution — Patients", f"""
         <div class="chart-grid-2">
           {chart_card(fig_to_html(fig_share))}
