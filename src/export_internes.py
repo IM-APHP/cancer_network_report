@@ -27,6 +27,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 from pivot_loader import charger_oeci          # noqa: E402
 from regional_loader import charger_regional   # noqa: E402
+from referentiels import ANNEE_MIN, ANNEE_MAX  # noqa: E402
 
 # Gabarits réels (format réel, vides pour l'instant) : versionnés dans templates/.
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -54,6 +55,15 @@ def _survie_niveau_appareil(df_survie):
     return pd.concat([df_survie, g], ignore_index=True)
 
 
+def _filtrer_periode(df):
+    """Restreint un DataFrame aux années ANNEE_MIN..ANNEE_MAX (bornes incluses).
+    Sans effet si la colonne ``annee`` est absente."""
+    if "annee" not in df.columns:
+        return df
+    annee = pd.to_numeric(df["annee"], errors="coerce")
+    return df[(annee >= ANNEE_MIN) & (annee <= ANNEE_MAX)]
+
+
 def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     """Lit les xlsx (fictif → ``data/*_fictif.xlsx`` ; réel → gabarits ``templates/``)
     et écrit les 3 CSV internes dans ``dossier_data``. ``dossier_source`` force le
@@ -66,6 +76,13 @@ def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     df_regional = charger_regional(dossier_source, fictif=fictif)
 
     df_survie = _survie_niveau_appareil(df_survie)
+
+    # Restriction de la période affichée (prod) : ANNEE_MIN..ANNEE_MAX inclus.
+    # Le régional source couvre 2016-2025 ; on coupe avant d'écrire les CSV.
+    df_aphp     = _filtrer_periode(df_aphp)
+    df_survie   = _filtrer_periode(df_survie)
+    df_regional = _filtrer_periode(df_regional)
+    print(f"  Période restreinte à {ANNEE_MIN}-{ANNEE_MAX}")
 
     chemins = {
         "aphp_data.csv": df_aphp,

@@ -43,9 +43,10 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def _source_oeci_dir(fictif: bool) -> str:
-    """Répertoire des xlsx OECI selon le mode (fictif → data/, réel → templates/),
-    pour les lectures qui nécessitent les xlsx (ex. mapping hôpital→GHU)."""
-    return str(DATA_DIR if fictif else TEMPLATES_DIR)
+    """Répertoire des xlsx OECI pour les lectures qui nécessitent les xlsx (ex.
+    mapping hôpital→GHU). En prod, les fichiers réels sont dans data/ : on lit
+    data/ dans les deux modes (fictif et réel)."""
+    return str(DATA_DIR)
 
 
 def generate_data(fictif: bool = True):
@@ -60,7 +61,8 @@ def generate_data(fictif: bool = True):
         exporter_csv(dossier_data=str(DATA_DIR), fictif=True)
     else:
         print("\n[1/1] Export interne depuis les fichiers RÉELS (→ 3 CSV)...")
-        exporter_csv(dossier_data=str(DATA_DIR), fictif=False)
+        exporter_csv(dossier_data=str(DATA_DIR), fictif=False,
+                     dossier_source=str(DATA_DIR))
 
 
 def build_all_reports(fictif: bool = True):

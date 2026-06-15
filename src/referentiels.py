@@ -6,6 +6,11 @@ Module feuille : n'importe rien du projet (évite tout cycle). Regroupe ce qui �
 dupliqué (``GHU_LIST`` dans chart_utils et run_reports) et les tables de
 correspondance des loaders (nom GHU → code ; Statut établissement → type)."""
 
+# Période affichée (prod) : on ne conserve que ces années dans les CSV internes,
+# bornes incluses. Le régional source couvre 2016-2025 ; on restreint à cette plage.
+ANNEE_MIN = 2022
+ANNEE_MAX = 2025
+
 # Codes GHU internes — ordre d'affichage des rapports.
 GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU SUN"]
 
