@@ -164,7 +164,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <footer class="report-footer">
   AP-HP — Rapport d'activité cancérologie &nbsp;|&nbsp;
   Généré le {date} &nbsp;|&nbsp;
-  Indicateurs OECI — Données simulées à titre illustratif
+  {footer_note}
 </footer>
 </body>
 </html>
@@ -183,10 +183,13 @@ def _render_page(year_range: str, **kwargs) -> str:
             ' être utilisés à des fins médicales, administratives ou décisionnelles.'
             '</div>'
         )
+        footer_note = "Indicateurs OECI — Données simulées à titre illustratif"
     else:
         badge = ""
         banner = ""
-    return HTML_TEMPLATE.format(year_range=year_range, fake_badge=badge, fake_banner=banner, **kwargs)
+        footer_note = "Indicateurs OECI"
+    return HTML_TEMPLATE.format(year_range=year_range, fake_badge=badge, fake_banner=banner,
+                               footer_note=footer_note, **kwargs)
 
 
 def fmt_nb(n: int) -> str:
