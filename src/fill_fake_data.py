@@ -11,12 +11,15 @@ PEC ») : il ne remplit que les colonnes de mesures, par-dessus le squelette
 existant, puis écrit des copies suffixées ``_fictif`` (les gabarits restent
 intacts).
 
-Deux exceptions documentées :
+Une exception documentée :
   * « Origine géo » est livré DÉJÀ rempli dans le gabarit : ses 3 colonnes de
     valeurs sont régénérées en fictif (uniquement dans la copie).
-  * « Survie globale » est livré ENTIÈREMENT vide (pas même le squelette de
-    dimensions) : son squelette est reconstruit à partir des tuples de
-    dimensions de « Délais PEC » (mêmes 5 dimensions), puis rempli.
+
+« Survie globale » : le gabarit fournit désormais son squelette de dimensions
+pré-rempli (libellés Niveau propres à cet onglet : 'AP-HP Total', 'GHU organe',
+'Hopital organe' ; granularité encodée par le remplissage Appareil/Organe). On
+remplit donc ses mesures par-dessus ce squelette, comme les autres onglets — fictif
+et réel se parsent ainsi à l'identique (plus de reconstruction depuis « Délais PEC »).
 
 Reproductibilité : seed fixe (np.random.seed(42)), série entièrement déterministe.
 
@@ -490,37 +493,66 @@ def fill_delais_sheet(ws, hdr, leaf_value):
             ws.cell(r, c).value = x
 
 
-def fill_survie_sheet(ws_sur, ws_del, leaf_value):
-    """« Survie globale » est vide : on reconstruit son squelette à partir des
-    tuples de dimensions de « Délais PEC », puis on remplit. Colonnes survie :
-    Niveau(1), Appareil patient(2), Organe patient(3), GHU(4), Hôpital(5).
-    ``leaf_value(app, org, hop)`` fournit la feuille déjà dérivée pour l'année."""
-    del_rows = collect_rows(ws_del, 2)  # (r, niv, ghu, hop, app, org)
+def _agg_survie(niveau):
+    """Niveau d'agrégation de « Survie globale » résolu par MOTS-CLÉS (libellés
+    PROPRES à cet onglet : 'AP-HP Total', 'GHU organe', 'Hopital organe' — ≠ des
+    autres onglets). Tester 'HOP' avant 'GH'/'AP-HP'. (Symétrique du loader.)"""
+    u = str(niveau or "").upper()
+    if "HOP" in u or "HÔP" in u:
+        return "Hôpital"
+    if "GH" in u:
+        return "GHU"
+    if "AP-HP" in u or "APHP" in u:
+        return "AP-HP"
+    return None
+
+
+def _select_leaves_survie(agg, ghu, hop, app, org, leaves):
+    """Sous-ensemble de feuilles (hôpital×organe) agrégé par une ligne de la feuille
+    survie, selon son niveau et son remplissage Appareil/Organe. Les feuilles portent
+    leur propre libellé GHU (col 4) → on agrège les GHU en comparant ce libellé tel
+    quel (pas de passage par HOSP2GHU : la feuille survie a ses propres noms d'hôpital
+    et de GHU courts)."""
+    app_tot = app in (None, "")
+    org_tot = org in (None, "")
+    if agg == "AP-HP":
+        if app_tot and org_tot:
+            return [v for (g, h, a, o, v) in leaves]
+        return [v for (g, h, a, o, v) in leaves if a == app and o == org]
+    if agg == "GHU":
+        if app_tot and org_tot:
+            return [v for (g, h, a, o, v) in leaves if g == ghu]
+        return [v for (g, h, a, o, v) in leaves if g == ghu and a == app and o == org]
+    if agg == "Hôpital":     # ligne « hôpital total » : feuilles de cet hôpital
+        return [v for (g, h, a, o, v) in leaves if h == hop]
+    return []
+
+
+def fill_survie_sheet(ws_sur, leaf_value):
+    """« Survie globale » : le squelette est DÉJÀ présent dans le gabarit (libellés
+    'AP-HP Total' / 'GHU organe' / 'Hopital organe' ; granularité par remplissage des
+    cellules Appareil/Organe) → on remplit les mesures DEDANS, comme les autres
+    onglets (plus de reconstruction depuis « Délais PEC »). Fictif et réel se parsent
+    ainsi à l'identique. Dimensions : 1 Niveau, 2 Appareil, 3 Organe, 4 GHU,
+    5 Hôpital ; en-tête sur 4 lignes. Feuilles = lignes hôpital×organe (Appareil ET
+    Organe remplis) ; agrégats = Nb sommés, % survie en moyenne pondérée par le Nb du
+    même bloc. ``leaf_value(app, org, hop)`` fournit la feuille dérivée pour l'année."""
+    rows = collect_rows(ws_sur, 4)   # (r, niv, app, org, ghu, hop) — ordre propre à cet onglet
     nb_cols = [6, 8, 10, 12, 14, 16, 18, 20]   # colonnes « Nb patients »
     pct_cols = [7, 9, 11, 13, 15, 17, 19, 21]  # colonnes « % survie »
-    out = []   # (niv, ghu, hop, app, org)
-    for (r, niv, ghu, hop, app, org) in del_rows:
-        out.append((niv, ghu, hop, app, org))
-    # écriture du squelette (lignes 5..) + génération/agrégation
-    leaves = []
+    leaves = []          # (ghu, hop, app, org, vals)
+    leaf_rows = set()
     rowvals = {}
-    base_r = 5
-    for i, (niv, ghu, hop, app, org) in enumerate(out):
-        r = base_r + i
-        ws_sur.cell(r, 1).value = niv
-        ws_sur.cell(r, 2).value = app
-        ws_sur.cell(r, 3).value = org
-        ws_sur.cell(r, 4).value = ghu
-        ws_sur.cell(r, 5).value = hop
-        if niv == "Hopital Organe":
+    for (r, niv, app, org, ghu, hop) in rows:
+        if _agg_survie(niv) == "Hôpital" and app not in (None, "") and org not in (None, ""):
             v = leaf_value(app, org, hop)
             rowvals[r] = v
-            leaves.append((HOSP2GHU.get(hop), hop, app, org, v))
-    for i, (niv, ghu, hop, app, org) in enumerate(out):
-        r = base_r + i
-        if niv == "Hopital Organe":
+            leaf_rows.add(r)
+            leaves.append((ghu, hop, app, org, v))
+    for (r, niv, app, org, ghu, hop) in rows:
+        if r in leaf_rows:
             continue
-        sel = select_leaves(niv, ghu, hop, app, org, leaves)
+        sel = _select_leaves_survie(_agg_survie(niv), ghu, hop, app, org, leaves)
         agg = {}
         for c in nb_cols:
             agg[c] = sum(v[c] for v in sel)
@@ -596,7 +628,7 @@ def fill_oeci_year(wb, annee):
                     make_provider(BASE_CHIR, gen_chirurgie_leaf, scale_chir, mult), 6, list(range(7, 13)))
     fill_delais_sheet(wb["Délais PEC"], 2,
                       make_provider(BASE_DELAIS, gen_delais_leaf, scale_delais, mult))
-    fill_survie_sheet(wb["Survie globale"], wb["Délais PEC"],
+    fill_survie_sheet(wb["Survie globale"],
                       make_provider(BASE_SURVIE, gen_survie_leaf, scale_survie, mult, sd))
     fill_effectifs(wb["Effectifs recherche"], 1, make_eff_provider(mult))
 
@@ -612,12 +644,12 @@ def _find_niveau_row(ws, niveau, hdr=1):
 def read_recap(wb):
     """Indicateurs AP-HP (toutes localisations) pour le récapitulatif inter-années :
     nb patients (Indicateurs patient · APHP Total · col 6) et survie 5 ans / 1 an
-    stade I-III « Tous patients » (Survie globale · APHP Total · col 7 / 11)."""
+    stade I-III « Tous patients » (Survie globale · AP-HP Total · col 7 / 11)."""
     wp = wb["Indicateurs patient"]
     rp = _find_niveau_row(wp, "APHP Total")
     nb_pat = wp.cell(rp, 6).value if rp else None
     ws = wb["Survie globale"]
-    rs = _find_niveau_row(ws, "APHP Total")
+    rs = _find_niveau_row(ws, "AP-HP Total")   # feuille survie : libellé propre
     surv5 = ws.cell(rs, 7).value if rs else None
     surv1 = ws.cell(rs, 11).value if rs else None
     return {"nb_patients": nb_pat, "survie_5ans_I_III": surv5, "survie_1an_I_III": surv1}
@@ -665,7 +697,7 @@ def validate_oeci(wb, annee):
 
     # 2) Survie AP-HP : I-III > IV (5 ans) et 1 an > 5 ans (I-III).
     ws = wb["Survie globale"]
-    rs = _find_niveau_row(ws, "APHP Total")
+    rs = _find_niveau_row(ws, "AP-HP Total")   # feuille survie : libellé propre
     if rs:
         s5_13, s5_4 = ws.cell(rs, 7).value, ws.cell(rs, 9).value
         s1_13 = ws.cell(rs, 11).value

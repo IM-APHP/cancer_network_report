@@ -19,13 +19,23 @@ GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU 
 APPAREIL_RESIDUEL = "Non décidable"
 
 # Nom complet GHU (tel qu'écrit dans la colonne GHU des fichiers OECI) → code interne.
+# La feuille « Survie globale » utilise une variante COURTE des libellés (différente des
+# autres onglets) : on l'ajoute ici pour que _resoudre_entite couvre les deux conventions.
 GHU_NOM2CODE = {
+    # Forme longue (Indicateurs patient/séjour/chirurgie, Effectifs recherche, Délais PEC).
     "APHP.Centre-Université de Paris": "GHU Centre",
     "APHP.Nord-Université de Paris": "GHU Nord",
     "APHP.Hôpitaux Universitaires Henri-Mondor": "GHU Mondor",
     "APHP.Hôpitaux Universitaires Paris-Seine-Saint-Denis": "GHU PSSD",
     "APHP.Sorbonne Université": "GHU SUN",        # SUN = Sorbonne
     "APHP.Université Paris Saclay": "GHU PSL",     # PSL = Paris Saclay
+    # Forme courte (feuille « Survie globale »).
+    "AP-HP.Centre": "GHU Centre",
+    "AP-HP.Nord": "GHU Nord",
+    "AP-HP.Henri Mondor": "GHU Mondor",
+    "AP-HP.Seine-Saint-Denis": "GHU PSSD",
+    "AP-HP.Sorbonne Université": "GHU SUN",
+    "AP-HP.Saclay": "GHU PSL",
 }
 
 # Statut d'établissement régional → type interne (appliqué si Hôpital AP-HP ≠ Oui).

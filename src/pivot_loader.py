@@ -266,24 +266,48 @@ def _plan_survie(ws):
     return plan
 
 
+def _agg_survie_niveau(niveau):
+    """Niveau d'agrégation de la feuille « Survie globale », résolu par MOTS-CLÉS
+    (robuste aux variantes de libellés, PROPRES à cet onglet : 'AP-HP Total',
+    'GHU organe', 'Hopital organe' — ≠ NIVEAU_MAP des autres onglets). Ordre
+    important : tester 'HOP' avant 'GH'/'AP-HP'."""
+    u = str(niveau or "").upper()
+    if "HOP" in u or "HÔP" in u:
+        return "Hôpital"
+    if "GH" in u:
+        return "GHU"
+    if "AP-HP" in u or "APHP" in u:
+        return "AP-HP"
+    return None
+
+
 def _frame_survie(path, annee):
     """Déplie les blocs survie vers le format long. Dimensions de l'onglet :
     1 Niveau, 2 Appareil, 3 Organe, 4 GHU, 5 Hôpital. Niveaux conservés : tous
-    (AP-HP + GHU + Hôpital), données à partir de la ligne 5."""
+    (AP-HP + GHU + Hôpital), données à partir de la ligne 5.
+
+    Particularités de cet onglet : (1) le Niveau ('AP-HP Total', 'GHU organe',
+    'Hopital organe') n'encode PAS la granularité et ne suit pas NIVEAU_MAP → on
+    résout l'agrégation par mots-clés ; (2) la granularité se DÉDUIT du remplissage
+    des cellules Appareil/Organe (toutes deux vides → ligne TOTAL ; sinon → organe)."""
     wb = openpyxl.load_workbook(path, data_only=True)   # accès aléatoire : pas de read_only
     ws = wb["Survie globale"]
     plan = _plan_survie(ws)
     lignes = []
     for r in range(5, ws.max_row + 1):
-        niv = ws.cell(r, 1).value
-        if niv not in NIVEAU_MAP:
+        agg = _agg_survie_niveau(ws.cell(r, 1).value)
+        if agg is None:
             continue
-        agg, gran = NIVEAU_MAP[niv]
         ent = _resoudre_entite(agg, ws.cell(r, 4).value, ws.cell(r, 5).value)
         if ent is None:
             continue
-        app = SENTINELLE if gran == "Total" else ws.cell(r, 2).value
-        org = SENTINELLE if gran == "Total" else ws.cell(r, 3).value
+        app_cell = ws.cell(r, 2).value
+        org_cell = ws.cell(r, 3).value
+        # Granularité déduite des cellules : Appareil ET Organe vides → sentinelle TOTAL.
+        if app_cell in (None, "") and org_cell in (None, ""):
+            app = org = SENTINELLE
+        else:
+            app, org = app_cell, org_cell
         for (pop, stade), cols in plan.items():
             lignes.append({
                 "annee": annee, "entite": ent, "appareil": app, "organe": org,
