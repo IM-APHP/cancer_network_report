@@ -94,6 +94,18 @@ def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     df_aphp, df_survie = charger_oeci(dossier_source, fictif=fictif)
     df_regional = charger_regional(dossier_source, fictif=fictif)
 
+    # Alerte si l'extrait régional est encore un gabarit VIDE (dimensions présentes,
+    # mesures toutes nulles) : les sections « Contexte régional » seront masquées par
+    # report_builder (cf. regional_disponible). Signalé ici pour ne pas produire un
+    # dashboard silencieusement amputé sans trace dans les logs.
+    mes_reg = ["nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+               "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie",
+               "nb_sejours_palliatifs"]
+    cols_reg = [c for c in mes_reg if c in df_regional.columns]
+    if cols_reg and float(df_regional[cols_reg].to_numpy().sum()) == 0:
+        print("  ⚠ Régional : mesures entièrement nulles (extrait canceroBR non rempli) "
+              "→ sections « Contexte régional » MASQUÉES dans les rapports.")
+
     df_survie = _survie_niveau_appareil(df_survie)
 
     # Restriction de la période affichée (prod) : ANNEE_MIN..ANNEE_MAX inclus.

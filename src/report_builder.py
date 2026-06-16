@@ -592,6 +592,30 @@ def load_regional(data_dir: Path) -> pd.DataFrame:
     return df
 
 
+# Mesures régionales affichées : sert à détecter un extrait canceroBR encore VIDE
+# (gabarit non rempli → toutes mesures nulles). Cf. regional_disponible().
+_MESURES_REGIONAL = [
+    "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+    "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
+]
+
+
+def regional_disponible(reg: pd.DataFrame) -> bool:
+    """Vrai si l'extrait régional porte des MESURES (≠ gabarit vide). Tant que les
+    vrais fichiers canceroBR ne sont pas livrés, ``data/`` contient les gabarits
+    (dimensions remplies, mesures vides → toutes nulles) : on masque alors les
+    sections « Contexte régional » plutôt que d'afficher des graphiques/tableaux
+    vides. Critère : au moins une mesure régionale strictement positive."""
+    if reg is None or reg.empty:
+        return False
+    cols = [c for c in _MESURES_REGIONAL if c in reg.columns]
+    if not cols:
+        return False
+    total = pd.to_numeric(
+        reg[cols].stack(), errors="coerce").fillna(0).sum()
+    return float(total) > 0
+
+
 def load_survival(data_dir: Path) -> pd.DataFrame:
     df = pd.read_csv(data_dir / "survival_data.csv")
     df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
@@ -663,19 +687,21 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
     # ── Tableau chiffré par appareil (remplace la heatmap) ──
     tbl_appareils = appareil_counts_table(aphp, "AP-HP")
 
-    # ── Contexte régional ──
-    reg_total = reg[(reg.appareil == "TOTAL")]
-    fig_reg_pts = regional_comparison(reg_total, "nb_patients",
-                                      "Patients — AP-HP vs contexte régional",
-                                      color_map=REGIONAL_COLORS)
-    reg_total_last = reg[(reg.appareil == "TOTAL") & (reg.organe == "TOTAL")
-                         & (reg.annee == last_year)]
-    # entities = types d'établissement (sinon donut_market_share filtre sur GHU_LIST par défaut)
-    types_etab = sorted(reg_total_last["entite"].unique())
-    fig_reg_donut = donut_market_share(
-        reg_total_last, "entite", "nb_patients",
-        f"Répartition de l'activité par type d'établissement — {last_year}",
-        entities=types_etab, color_map=REGIONAL_COLORS)
+    # ── Contexte régional (seulement si l'extrait régional est rempli) ──
+    reg_dispo = regional_disponible(reg)
+    if reg_dispo:
+        reg_total = reg[(reg.appareil == "TOTAL")]
+        fig_reg_pts = regional_comparison(reg_total, "nb_patients",
+                                          "Patients — AP-HP vs contexte régional",
+                                          color_map=REGIONAL_COLORS)
+        reg_total_last = reg[(reg.appareil == "TOTAL") & (reg.organe == "TOTAL")
+                             & (reg.annee == last_year)]
+        # entities = types d'établissement (sinon donut_market_share filtre sur GHU_LIST par défaut)
+        types_etab = sorted(reg_total_last["entite"].unique())
+        fig_reg_donut = donut_market_share(
+            reg_total_last, "entite", "nb_patients",
+            f"Répartition de l'activité par type d'établissement — {last_year}",
+            entities=types_etab, color_map=REGIONAL_COLORS)
 
     # ── Graphique patients par appareil ──
     fig_bar_app = bar_appareils_years(aphp)
@@ -689,17 +715,18 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
 
     content += section("Indicateurs clés — " + str(last_year), kpis_html + covid_note, "kpis")
 
-    # Contexte régional — juste sous les indicateurs clés
-    content += section("Contexte régional", f"""
-        <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
-          Comparaison avec les autres types d'établissements de la région Île-de-France
-          (Cliniques, Centres Hospitaliers, CHU, PSPH).
-        </p>
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_reg_pts))}
-          {chart_card(fig_to_html(fig_reg_donut))}
-        </div>
-    """, "regional")
+    # Contexte régional — juste sous les indicateurs clés (masqué si extrait vide)
+    if reg_dispo:
+        content += section("Contexte régional", f"""
+            <p style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">
+              Comparaison avec les autres types d'établissements de la région Île-de-France
+              (Cliniques, Centres Hospitaliers, CHU, PSPH).
+            </p>
+            <div class="chart-grid-2">
+              {chart_card(fig_to_html(fig_reg_pts))}
+              {chart_card(fig_to_html(fig_reg_donut))}
+            </div>
+        """, "regional")
 
     content += section("Évolution globale du nombre de patients", f"""
         {covid_note}
@@ -745,16 +772,16 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
                        f'<div style="line-height:2.2">{app_links_global}</div>', "nav-appareils")
     content += section("Rapports par organe", organe_nav_links_html(aphp), "nav-organes")
 
-    nav = "\n".join([
+    nav = "\n".join([l for l in [
         '<a href="#kpis">Indicateurs clés</a>',
-        '<a href="#regional">Contexte régional</a>',
+        '<a href="#regional">Contexte régional</a>' if reg_dispo else None,
         '<a href="#evolution">Évolution globale</a>',
         '<a href="#ghu">Groupes hospitaliers</a>',
         '<a href="#appareils">Par appareil</a>',
         '<a href="#survie">Survie & Délais</a>',
         '<a href="#nav-organes">Par organe</a>',
         '<a href="rapport_comparaison_hopitaux.html">Inter-hôpitaux</a>',
-    ])
+    ] if l])
 
     html = _render_page(year_range,
         title="Cancérologie AP-HP — Tableau de bord",
@@ -978,16 +1005,18 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     all_delay_ents = pd.concat([aphp_app, ghu_app])
     fig_delay_cmp = delay_comparison_bar(all_delay_ents, appareil, last_year)
 
-    # Contexte régional
-    reg_app = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
-    fig_reg = regional_comparison(reg_app, "nb_patients",
-                                  f"Contexte régional — {appareil}",
-                                  color_map=REGIONAL_COLORS)
-    reg_app_last = reg_app[reg_app.annee == last_year]
-    fig_reg_donut = donut_market_share(
-        reg_app_last, "entite", "nb_patients",
-        f"Parts de marché régional — {appareil} ({last_year})",
-        entities=sorted(reg_app_last["entite"].unique()), color_map=REGIONAL_COLORS)
+    # Contexte régional (seulement si l'extrait régional est rempli)
+    reg_dispo = regional_disponible(reg)
+    if reg_dispo:
+        reg_app = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
+        fig_reg = regional_comparison(reg_app, "nb_patients",
+                                      f"Contexte régional — {appareil}",
+                                      color_map=REGIONAL_COLORS)
+        reg_app_last = reg_app[reg_app.annee == last_year]
+        fig_reg_donut = donut_market_share(
+            reg_app_last, "entite", "nb_patients",
+            f"Parts de marché régional — {appareil} ({last_year})",
+            entities=sorted(reg_app_last["entite"].unique()), color_map=REGIONAL_COLORS)
 
     # Bandeau d'accès aux versions GHU (promu en HAUT de page)
     _app_slug = slugify(appareil)
@@ -1009,14 +1038,18 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     content = ghu_banner
     content += section(f"Indicateurs clés — {appareil} — {last_year}", kpis_html, "kpis")
     if entity == "AP-HP":
-        # AP-HP : Évolution = contexte RÉGIONAL uniquement (+ séjours par mode conservés)
-        evo_html = f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_reg))}
-          {chart_card(fig_to_html(fig_reg_donut))}
-        </div>
-        <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
-        """
+        # AP-HP : Évolution = contexte RÉGIONAL (si dispo) + séjours par mode.
+        # Extrait régional vide → on n'affiche que les séjours (pas de cartes vides).
+        if reg_dispo:
+            evo_html = f"""
+            <div class="chart-grid-2">
+              {chart_card(fig_to_html(fig_reg))}
+              {chart_card(fig_to_html(fig_reg_donut))}
+            </div>
+            <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
+            """
+        else:
+            evo_html = f'{chart_card(fig_to_html(fig_sejours), "full")}'
     else:
         # GHU : patients = TOUS les GHU ; part de marché du GHU dans l'AP-HP ; pas de régional
         fig_pts_ghu = line_evolution(ghu_app, "annee", "nb_patients", "entite",
@@ -1149,18 +1182,20 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     # Délais
     fig_delay = delay_evolution(aphp, entity, appareil, organe=organe)
 
-    # Contexte régional
-    reg_org = reg[(reg.appareil == appareil) & (reg.organe == organe)]
-    if reg_org.empty:
-        reg_org = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
-    fig_reg = regional_comparison(reg_org, "nb_patients",
-                                  f"Contexte régional — {organe}",
-                                  color_map=REGIONAL_COLORS)
-    reg_org_last = reg_org[reg_org.annee == last_year]
-    fig_reg_donut = donut_market_share(
-        reg_org_last, "entite", "nb_patients",
-        f"Parts de marché régional — {organe} ({last_year})",
-        entities=sorted(reg_org_last["entite"].unique()), color_map=REGIONAL_COLORS)
+    # Contexte régional (seulement si l'extrait régional est rempli)
+    reg_dispo = regional_disponible(reg)
+    if reg_dispo:
+        reg_org = reg[(reg.appareil == appareil) & (reg.organe == organe)]
+        if reg_org.empty:
+            reg_org = reg[(reg.appareil == appareil) & (reg.organe == "TOTAL")]
+        fig_reg = regional_comparison(reg_org, "nb_patients",
+                                      f"Contexte régional — {organe}",
+                                      color_map=REGIONAL_COLORS)
+        reg_org_last = reg_org[reg_org.annee == last_year]
+        fig_reg_donut = donut_market_share(
+            reg_org_last, "entite", "nb_patients",
+            f"Parts de marché régional — {organe} ({last_year})",
+            entities=sorted(reg_org_last["entite"].unique()), color_map=REGIONAL_COLORS)
 
     app_slug = slugify(appareil)
     org_slug = slugify(organe)
@@ -1183,14 +1218,18 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     content = ghu_banner
     content += section(f"Indicateurs clés — {organe} — {last_year}", kpis_html, "kpis")
     if entity == "AP-HP":
-        # AP-HP : Évolution = contexte RÉGIONAL uniquement (+ séjours par mode conservés)
-        evo_html = f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_reg))}
-          {chart_card(fig_to_html(fig_reg_donut))}
-        </div>
-        <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
-        """
+        # AP-HP : Évolution = contexte RÉGIONAL (si dispo) + séjours par mode.
+        # Extrait régional vide → on n'affiche que les séjours (pas de cartes vides).
+        if reg_dispo:
+            evo_html = f"""
+            <div class="chart-grid-2">
+              {chart_card(fig_to_html(fig_reg))}
+              {chart_card(fig_to_html(fig_reg_donut))}
+            </div>
+            <div style="margin-top:20px">{chart_card(fig_to_html(fig_sejours), "full")}</div>
+            """
+        else:
+            evo_html = f'{chart_card(fig_to_html(fig_sejours), "full")}'
     else:
         # GHU : patients = TOUS les GHU ; part de marché du GHU dans l'AP-HP ; pas de régional
         fig_pts_ghu = line_evolution(ghu_org, "annee", "nb_patients", "entite",
