@@ -98,12 +98,23 @@ def _fichiers_oeci(dossier, fictif):
     return sorted(out)
 
 
+def _code_ghu(nom):
+    """Code GHU depuis un nom (forme longue ou courte). Tolère le SÉPARATEUR
+    variable des formes courtes selon les millésimes réels : 'AP-HP.Centre' (dot,
+    2023-2025) ET 'AP-HP,Centre' (virgule, 2022). On tente le libellé brut puis la
+    variante virgule→point, le référentiel ne portant que la forme à point."""
+    if nom is None:
+        return None
+    cle = str(nom).strip()
+    return GHU_NOM2CODE.get(cle) or GHU_NOM2CODE.get(cle.replace(",", "."))
+
+
 def _resoudre_entite(niveau_agg, ghu_nom, hop_nom):
     """AP-HP → 'AP-HP' ; GHU → code via nom complet ; Hôpital → nom d'hôpital."""
     if niveau_agg == "AP-HP":
         return "AP-HP"
     if niveau_agg == "GHU":
-        return GHU_NOM2CODE.get(ghu_nom)
+        return _code_ghu(ghu_nom)
     return hop_nom  # Hôpital
 
 
@@ -397,24 +408,31 @@ def charger_oeci(dossier="data", fictif=True):
 def mapping_hopital_ghu(dossier="data", fictif=True):
     """Rattachement {hôpital → code GHU} DÉRIVÉ DES DONNÉES (jamais codé en dur).
 
-    Dérivé de l'onglet « Effectifs recherche », seul endroit où GHU (nom complet) et
-    Hôpital coexistent sur la même ligne (niveau feuille « Hôpital - Organe -
-    Appareil »). Mapping stable d'une année à l'autre → on lit le 1er fichier."""
+    Dérivé de l'onglet « Survie globale » : les lignes de niveau « Hôpital » y
+    portent le GHU en colonne 4 et l'hôpital en colonne 5 (cf. ``_frame_survie``).
+    C'est la SEULE feuille des vrais extraits où GHU et hôpital coexistent sur une
+    même ligne — l'onglet « Effectifs recherche » (ancienne source) est ABSENT des
+    extraits réels. Mapping stable d'une année à l'autre, mais on UNIONNE tous les
+    millésimes : un hôpital peut n'apparaître que certaines années."""
     fichiers = _fichiers_oeci(dossier, fictif)
     if not fichiers:
         mode = "fictif" if fictif else "réel"
         raise FileNotFoundError(f"Aucun fichier OECI ({mode}) dans {dossier!r}.")
-    _, path = fichiers[0]
-    df = pd.read_excel(path, sheet_name="Effectifs recherche")
-    df.columns = [str(c).strip() if isinstance(c, str) else c for c in df.columns]
-    cols = list(df.columns)
-    df = df.rename(columns={cols[0]: "niveau", cols[1]: "ghu", cols[2]: "hopital"})
-    feuilles = df[df["niveau"] == "Hôpital - Organe - Appareil"][["hopital", "ghu"]].dropna()
     mapping = {}
-    for hop, ghu in feuilles.drop_duplicates().itertuples(index=False):
-        code = GHU_NOM2CODE.get(str(ghu).strip())
-        if code:
-            mapping[str(hop).strip()] = code
+    for _, path in fichiers:
+        # data_only sans read_only : accès aléatoire ws.cell(r,c) quadratique en
+        # read_only (cf. CLAUDE.md) — même choix que _frame_survie.
+        wb = openpyxl.load_workbook(path, data_only=True)
+        if "Survie globale" not in wb.sheetnames:
+            continue
+        ws = wb["Survie globale"]
+        for r in range(5, ws.max_row + 1):
+            if _agg_survie_niveau(ws.cell(r, 1).value) != "Hôpital":
+                continue
+            hop = ws.cell(r, 5).value
+            code = _code_ghu(ws.cell(r, 4).value)
+            if hop not in (None, "") and code:
+                mapping.setdefault(str(hop).strip(), code)
     return mapping
 
 
