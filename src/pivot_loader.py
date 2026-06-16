@@ -281,6 +281,35 @@ def _agg_survie_niveau(niveau):
     return None
 
 
+_MESURES_SURVIE = ["nb_patients_stade", "survie_1an", "survie_5ans"]
+
+
+def _coercer_num_survie(df):
+    """Coerce les 3 mesures survie en numérique, robuste au format français des
+    vraies données : espaces de milliers (normaux ET insécables \\xa0), « % »,
+    virgule décimale. Les valeurs MASQUÉES pour petits effectifs (« ns », « n.d. »,
+    « < 5 », « - »…) ne sont pas convertibles → NaN. Logue un échantillon des valeurs
+    brutes passées à NaN, pour révéler la convention de masquage des vraies données."""
+    non_num = set()
+    for col in _MESURES_SURVIE:
+        if col not in df.columns:
+            continue
+        brut = df[col]
+        nettoye = (brut.astype(str)
+                   .str.replace("\xa0", "", regex=False)
+                   .str.replace(" ", "", regex=False)
+                   .str.replace("%", "", regex=False)
+                   .str.replace(",", ".", regex=False))
+        num = pd.to_numeric(nettoye, errors="coerce")
+        # Valeurs brutes NON vides devenues NaN = masquage (≠ cellules vides d'origine).
+        masque = num.isna() & brut.notna() & (brut.astype(str).str.strip() != "")
+        non_num.update(brut[masque].astype(str).str.strip().unique().tolist())
+        df[col] = num
+    if non_num:
+        print(f"  Survie : valeurs non numériques → NaN : {sorted(non_num)[:20]}")
+    return df
+
+
 def _frame_survie(path, annee):
     """Déplie les blocs survie vers le format long. Dimensions de l'onglet :
     1 Niveau, 2 Appareil, 3 Organe, 4 GHU, 5 Hôpital. Niveaux conservés : tous
@@ -317,7 +346,10 @@ def _frame_survie(path, annee):
                 "survie_5ans": ws.cell(r, cols["s5"]).value,
             })
     wb.close()
-    return pd.DataFrame(lignes)
+    df = pd.DataFrame(lignes)
+    if not df.empty:
+        df = _coercer_num_survie(df)
+    return df
 
 
 # ──────────────────────────── assemblage public ────────────────────────────

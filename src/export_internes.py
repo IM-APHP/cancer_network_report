@@ -36,20 +36,39 @@ TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "templates")
 def _survie_niveau_appareil(df_survie):
     """Reconstruit les lignes de survie au niveau APPAREIL (organe='TOTAL') par
     agrégation pondérée des lignes organe. Clé incluant ``population`` (pas de
-    mélange tous/nouveaux). Renvoie df_survie augmenté de ces lignes."""
+    mélange tous/nouveaux). Renvoie df_survie augmenté de ces lignes.
+
+    Pondération NaN-safe : pour CHAQUE mesure (survie_1an, survie_5ans) séparément,
+    le poids est la somme de ``nb_patients_stade`` sur les seules lignes où la mesure
+    ET le poids sont numériques. Moyenne = NaN (vide) si aucun poids valide — on ne
+    force PAS 0 et une survie masquée (NaN) ne biaise pas le dénominateur."""
     organe = df_survie[df_survie["organe"] != "TOTAL"].copy()
     if organe.empty:
         return df_survie
+    cle = ["annee", "entite", "appareil", "stade", "population"]
+    # Les mesures sont déjà numériques (coercées dans pivot_loader) : une valeur
+    # masquée vaut NaN. Numérateur = mesure×nb : NaN sur les lignes masquées, IGNORÉ
+    # par la somme groupby (skipna) → identique à l'ancien code quand rien n'est
+    # masqué. Dénominateur NaN-safe : nb seulement là où la mesure est non-NaN (0
+    # sinon) → une survie masquée ne biaise plus le poids.
     organe["_w1"] = organe["survie_1an"] * organe["nb_patients_stade"]
     organe["_w5"] = organe["survie_5ans"] * organe["nb_patients_stade"]
-    cle = ["annee", "entite", "appareil", "stade", "population"]
+    organe["_n1"] = organe["nb_patients_stade"].where(organe["survie_1an"].notna(), 0)
+    organe["_n5"] = organe["nb_patients_stade"].where(organe["survie_5ans"].notna(), 0)
     g = organe.groupby(cle, as_index=False).agg(
         nb_patients_stade=("nb_patients_stade", "sum"),
-        _w1=("_w1", "sum"), _w5=("_w5", "sum"),
+        _w1=("_w1", "sum"), _n1=("_n1", "sum"),
+        _w5=("_w5", "sum"), _n5=("_n5", "sum"),
     )
-    poids = g["nb_patients_stade"].replace(0, pd.NA)
-    g["survie_1an"] = (g["_w1"] / poids).fillna(0).round(1)
-    g["survie_5ans"] = (g["_w5"] / poids).fillna(0).round(1)
+    # Moyenne = Σ(mesure×nb)/Σnb_valide ; ``.where(>0)`` → NaN si aucun poids valide
+    # (pas de 0 forcé, round-safe ; surtout PAS ``replace(0, pd.NA)`` qui ferait
+    # planter ``.round`` sur un groupe entièrement masqué). Arrondi via le ``round``
+    # de Python (et non numpy) pour rester bit-identique à l'ancien code sur les ties
+    # d'arrondi exacts (ex. 34.15 → 34.1), tout en préservant les NaN.
+    def _round1(serie):
+        return serie.map(lambda x: round(float(x), 1) if pd.notna(x) else x)
+    g["survie_1an"] = _round1(g["_w1"] / g["_n1"].where(g["_n1"] > 0))
+    g["survie_5ans"] = _round1(g["_w5"] / g["_n5"].where(g["_n5"] > 0))
     g["organe"] = "TOTAL"
     g = g[df_survie.columns]
     return pd.concat([df_survie, g], ignore_index=True)
