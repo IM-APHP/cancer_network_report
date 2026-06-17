@@ -45,6 +45,46 @@ MESURES_SEJ = ["nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
 
 
 # ───────────────────────────── utilitaires ─────────────────────────────────
+def _to_num(serie):
+    """Coerce une série en numérique, robuste au format français des vraies données :
+    espaces de milliers (normaux ET insécables \\xa0), « % », virgule décimale. Les
+    valeurs non convertibles (masquées, libellés…) deviennent NaN. Même logique que la
+    coercition de la survie (pivot_loader)."""
+    nettoye = (serie.astype(str)
+               .str.replace("\xa0", "", regex=False)
+               .str.replace(" ", "", regex=False)
+               .str.replace("%", "", regex=False)
+               .str.replace(",", ".", regex=False))
+    return pd.to_numeric(nettoye, errors="coerce")
+
+
+def _coercer(df, cols, label):
+    """Coerce en place les colonnes ``cols`` de ``df`` via ``_to_num`` AVANT toute
+    somme (pandas 2.x refuse d'additionner int + str). Logue un diagnostic distinguant
+    les NOMBRES FORMATÉS récupérés (« 1 234 », « 12,5 ») des VRAIES valeurs non
+    numériques tombées à NaN (masquage / libellés parasites)."""
+    recuperes, masques = set(), set()
+    for c in cols:
+        if c not in df.columns:
+            continue
+        orig = df[c]
+        brut = orig.astype(str)
+        num = _to_num(orig)
+        # « non vide » = cellule réellement renseignée (``notna`` car en pandas 2.x
+        # ``astype(str)`` laisse les None en NaN flottant, pas en « None »).
+        non_vide = orig.notna() & (brut.str.strip() != "") & (~brut.str.strip().str.lower().isin(["nan", "none"]))
+        formate = brut.str.contains(r"[ \xa0,]", regex=True, na=False)
+        recuperes.update(brut[num.notna() & formate & non_vide].unique().tolist())
+        masques.update(brut[num.isna() & non_vide].unique().tolist())
+        df[c] = num
+    if recuperes:
+        print(f"  Régional {label} : {len(recuperes)} valeur(s) au format FR récupérée(s), "
+              f"ex. {sorted(recuperes)[:5]}")
+    if masques:
+        print(f"  Régional {label} : valeur(s) non numérique(s) → NaN, ex. {sorted(masques)[:10]}")
+    return df
+
+
 def _trouver_fichier(dossier, fictif, tag):
     """Chemin unique du fichier canceroBR ``tag`` ∈ {Pat, Sej}. En mode fictif on
     ne lit QUE les ``*_fictif.xlsx`` ; en mode réel on exclut les ``_fictif``."""
@@ -88,6 +128,8 @@ def _frame_patients(path):
     df = _lire_total(path, header=0)   # en-tête sur 1 ligne
     df = df.rename(columns={"Nb de patients": "nb_patients",
                             "Nouveaux patients": "nb_nouveaux_patients"})
+    # Coercition numérique AVANT la somme (format FR : « 1 234 » → 1234).
+    df = _coercer(df, MESURES_PAT, "patients")
     cle = ["annee", "entite", "appareil", "organe"]
     return df.groupby(cle, as_index=False)[MESURES_PAT].sum()
 
@@ -99,12 +141,17 @@ def _frame_sejours(path):
     chir_cols = [c for c in df.columns if str(c).startswith("Séjours avec chirurgie")]
     if len(chir_cols) != 2:
         raise ValueError(f"Attendu 2 colonnes « Séjours avec chirurgie », trouvé {chir_cols}")
+    # Coercer les 2 colonnes chirurgie AVANT la somme par ligne, puis la calculer.
+    df = _coercer(df, chir_cols, "séjours chirurgie")
     df["nb_sejours_chirurgie"] = df[chir_cols].sum(axis=1)
     df = df.rename(columns={
         "Séjours avec chimio": "nb_sejours_chimiotherapie",
         "Séjours avec radiothérapie": "nb_sejours_radiotherapie",
         "Nb de séjours palliatifs": "nb_sejours_palliatifs",
     })
+    # Coercer les autres mesures de séjours AVANT le groupby().sum().
+    df = _coercer(df, ["nb_sejours_chimiotherapie", "nb_sejours_radiotherapie",
+                       "nb_sejours_palliatifs"], "séjours")
     cle = ["annee", "entite", "appareil", "organe"]
     return df.groupby(cle, as_index=False)[MESURES_SEJ].sum()
 
