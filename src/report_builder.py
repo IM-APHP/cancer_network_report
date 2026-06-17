@@ -358,37 +358,44 @@ def survival_delay_table(
     appareils = sorted(aphp_df[aphp_df.appareil != "TOTAL"].appareil.unique())
     n = len(years)
 
+    # En-tête sur 3 niveaux : la survie est désormais déclinée par stade (I-III | IV)
+    # → 2 colonnes par année ; le délai reste une colonne par année (non lié au stade).
     head = (
         "<tr>"
-        f'<th rowspan="2" style="text-align:left;min-width:190px;padding:8px">Appareil</th>'
-        f'<th colspan="{n}" style="background:#E8F4F8;padding:6px">Survie à 5 ans (%)</th>'
+        '<th rowspan="3" style="text-align:left;min-width:190px;padding:8px">Appareil</th>'
+        f'<th colspan="{2 * n}" style="background:#E8F4F8;padding:6px">Survie à 5 ans (%)</th>'
         f'<th colspan="{n}" style="background:#FFF3E0;padding:6px">Délai médian (j)</th>'
         "</tr><tr>"
-        + "".join(f'<th style="background:#E8F4F8;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
-        + "".join(f'<th style="background:#FFF3E0;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "".join(f'<th colspan="2" style="background:#E8F4F8;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "".join(f'<th rowspan="2" style="background:#FFF3E0;padding:4px 6px;font-weight:500">{y}</th>' for y in years)
+        + "</tr><tr>"
+        + "".join('<th style="background:#E8F4F8;padding:3px 6px;font-weight:500;font-size:.78rem">I-III</th>'
+                  '<th style="background:#E8F4F8;padding:3px 6px;font-weight:500;font-size:.78rem">IV</th>'
+                  for _ in years)
         + "</tr>"
     )
+
+    def _survie_cell(yr, app, stade):
+        """Cellule survie 5 ans pour un stade donné (population « tous »). NaN/absent → « — »."""
+        s = surv_df[
+            (surv_df.entite == entity) & (surv_df.appareil == app)
+            & (surv_df.organe == "TOTAL") & (surv_df.annee == yr)
+            & (surv_df.population == "tous") & (surv_df.stade == stade)
+        ]
+        if s.empty or pd.isna(s.iloc[0]["survie_5ans"]):
+            return '<td style="text-align:center">—</td>'
+        v = float(s.iloc[0]["survie_5ans"])
+        bg = "#d4edda" if v >= 80 else ("#fff3cd" if v >= 50 else "#f8d7da")
+        return f'<td style="text-align:center;background:{bg};padding:5px 6px">{v:.0f}%</td>'
 
     body = ""
     for app in appareils:
         surv_cells = ""
         delay_cells = ""
         for yr in years:
-            # Survie à 5 ans pondérée par les stades — filtrer UNE population
-            # (sinon le poids nb_patients_stade est compté deux fois : tous + nouveaux).
-            s = surv_df[
-                (surv_df.entite == entity) & (surv_df.appareil == app)
-                & (surv_df.organe == "TOTAL") & (surv_df.annee == yr)
-                & (surv_df.population == "tous")
-            ]
-            if not s.empty:
-                w = (s.survie_5ans * s.nb_patients_stade).sum() / s.nb_patients_stade.sum()
-                bg = "#d4edda" if w >= 80 else ("#fff3cd" if w >= 50 else "#f8d7da")
-                surv_cells += f'<td style="text-align:center;background:{bg};padding:5px 6px">{w:.0f}%</td>'
-            else:
-                surv_cells += '<td style="text-align:center">—</td>'
+            surv_cells += _survie_cell(yr, app, "I-III") + _survie_cell(yr, app, "IV")
 
-            # Délai
+            # Délai (inchangé : non décliné par stade)
             d = aphp_df[
                 (aphp_df.entite == entity) & (aphp_df.appareil == app)
                 & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)
@@ -408,7 +415,7 @@ def survival_delay_table(
         f'<tbody>{body}</tbody>'
         "</table></div>"
         '<p style="font-size:.78rem;color:#6C757D;margin-top:8px">'
-        'Survie à 5 ans pondérée par la distribution des stades. '
+        'Survie à 5 ans par stade (I-III / IV). '
         '<span style="background:#d4edda;padding:2px 5px;border-radius:3px">≥ 80 %</span> '
         '<span style="background:#fff3cd;padding:2px 5px;border-radius:3px">50–79 %</span> '
         '<span style="background:#f8d7da;padding:2px 5px;border-radius:3px">< 50 %</span>'
@@ -832,7 +839,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     )
     fig_share = line_evolution(share_data, "annee", "part_marche", "entite",
                                f"Part de marché dans l'AP-HP — {ghu_name} (%)",
-                               entities=[ghu_name])
+                               entities=[ghu_name], y_zero=True)
 
     # Séjours
     melted = ghu_total.melt(
@@ -938,7 +945,7 @@ def _market_share_evolution(ent_df: pd.DataFrame, aphp_df: pd.DataFrame,
     d["entite"] = entity
     return line_evolution(d, "annee", "part_marche", "entite",
                           f"Part de marché de {entity} dans l'AP-HP — {libelle} (%)",
-                          entities=[entity])
+                          entities=[entity], y_zero=True)
 
 
 # ── Rapport par appareil ───────────────────────────────────────────────────────
@@ -996,9 +1003,10 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     tbl_organes = organe_counts_table(aphp, entity, appareil)
     fig_tree = treemap_organes(aphp, entity, appareil, last_year)
 
-    # Survie
+    # Survie : répartition par stade + évolution POUR LES DEUX stades (I-III et IV)
     fig_surv = survival_by_stage(surv, entity, appareil, year=last_year)
-    fig_surv_evo = survival_evolution(surv, entity, appareil, stade="I-III")
+    fig_surv_evo_i3 = survival_evolution(surv, entity, appareil, stade="I-III")
+    fig_surv_evo_iv = survival_evolution(surv, entity, appareil, stade="IV")
 
     # Délais
     fig_delay = delay_evolution(aphp, entity, appareil)
@@ -1090,9 +1098,10 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         {f'<div style="margin-top:16px;padding:14px;background:#F8F9FA;border-radius:8px"><strong style="color:#003189">Organes — {appareil} :</strong><br>{org_links_html}</div>' if org_links_html else ''}
     """, "organes", action=organes_action)
     content += section("Survie par stade", f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_surv))}
-          {chart_card(fig_to_html(fig_surv_evo))}
+        {chart_card(fig_to_html(fig_surv), "full")}
+        <div class="chart-grid-2" style="margin-top:20px">
+          {chart_card(fig_to_html(fig_surv_evo_i3))}
+          {chart_card(fig_to_html(fig_surv_evo_iv))}
         </div>
     """, "survie")
     content += section("Délais de prise en charge", f"""
@@ -1170,14 +1179,13 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
                                  f"Séjours par mode de PEC — {organe}",
                                  entities=list(TREATMENT_COLS.values()))
 
-    # Survie
+    # Survie : répartition par stade + évolution POUR LES DEUX stades (I-III et IV)
     surv_org = surv[(surv.organe == organe) & (surv.appareil == appareil)] if surv is not None else pd.DataFrame()
-    if not surv_org.empty:
-        fig_surv = survival_by_stage(surv, entity, appareil, organe=organe, year=last_year)
-        fig_surv_evo = survival_evolution(surv, entity, appareil, organe=organe, stade="I-III")
-    else:
-        fig_surv = survival_by_stage(surv, entity, appareil, year=last_year)
-        fig_surv_evo = survival_evolution(surv, entity, appareil, stade="I-III")
+    org_surv = organe if not surv_org.empty else "TOTAL"
+    fig_surv = survival_by_stage(surv, entity, appareil,
+                                 **({"organe": organe} if not surv_org.empty else {}), year=last_year)
+    fig_surv_evo_i3 = survival_evolution(surv, entity, appareil, organe=org_surv, stade="I-III")
+    fig_surv_evo_iv = survival_evolution(surv, entity, appareil, organe=org_surv, stade="IV")
 
     # Délais
     fig_delay = delay_evolution(aphp, entity, appareil, organe=organe)
@@ -1247,9 +1255,10 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
         """
     content += section("Évolution", evo_html, "evolution")
     content += section("Survie par stade", f"""
-        <div class="chart-grid-2">
-          {chart_card(fig_to_html(fig_surv))}
-          {chart_card(fig_to_html(fig_surv_evo))}
+        {chart_card(fig_to_html(fig_surv), "full")}
+        <div class="chart-grid-2" style="margin-top:20px">
+          {chart_card(fig_to_html(fig_surv_evo_i3))}
+          {chart_card(fig_to_html(fig_surv_evo_iv))}
         </div>
     """, "survie")
     content += section("Délais de prise en charge",
@@ -1296,31 +1305,35 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
 
     intro = (
         '<p style="color:#6C757D;font-size:.9rem;margin-bottom:18px">'
-        'Survie à 5 ans (barres) et à 1 an (losanges) par hôpital, pour les patients de '
-        'stade I-III. Les hôpitaux sont <b>colorés par GHU</b> et triés par survie décroissante. '
-        'Le trait plein noir marque la référence <b>AP-HP</b> ; les pointillés colorés, la '
-        'référence de chaque <b>GHU</b>.</p>'
+        'Survie à 5 ans (barres) et à 1 an (losanges) par hôpital, déclinée par '
+        '<b>stade (I-III puis IV)</b>. Les hôpitaux sont <b>colorés par GHU</b> et triés par '
+        'survie décroissante. Le trait plein noir marque la référence <b>AP-HP</b> ; les '
+        'pointillés colorés, la référence de chaque <b>GHU</b>.</p>'
     )
 
+    def _paire_stades(appareil):
+        """Deux graphiques empilés (stade I-III puis IV) pour un appareil donné."""
+        html = ""
+        for stade in ("I-III", "IV"):
+            fig = survival_hospital_comparison(surv_df, mapping, appareil=appareil,
+                                               organe="TOTAL", stade=stade,
+                                               population="tous", annee=last_year)
+            html += chart_card(fig_to_html(fig), "full")
+        return html
+
     content = ""
-    # 1. Comparaison globale (toutes localisations)
-    fig_glob = survival_hospital_comparison(surv_df, mapping, appareil="TOTAL",
-                                            organe="TOTAL", stade="I-III",
-                                            population="tous", annee=last_year)
+    # 1. Comparaison globale (toutes localisations) — I-III + IV
     content += section("Comparaison globale — toutes localisations",
-                       intro + chart_card(fig_to_html(fig_glob), "full"),
+                       intro + _paire_stades("TOTAL"),
                        "global")
 
-    # 2. Déclinaison par grand appareil (sections non vides)
+    # 2. Déclinaison par grand appareil (sections non vides) — I-III + IV
     nav_app = []
     for app in _APPAREILS_COMPARAISON:
         if not _a_des_donnees(app):
             continue
         anchor = "cmp-" + slugify(app)
-        fig = survival_hospital_comparison(surv_df, mapping, appareil=app,
-                                           organe="TOTAL", stade="I-III",
-                                           population="tous", annee=last_year)
-        content += section(app.capitalize(), chart_card(fig_to_html(fig), "full"), anchor)
+        content += section(app.capitalize(), _paire_stades(app), anchor)
         nav_app.append(f'<a href="#{anchor}">{app.capitalize()}</a>')
 
     nav = "\n".join([

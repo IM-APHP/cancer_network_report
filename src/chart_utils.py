@@ -141,6 +141,12 @@ def line_evolution(
     lo = _layout()
     if y_zero:
         lo["yaxis"] = dict(showgrid=True, gridcolor="#F0F0F0", zeroline=False, rangemode="tozero")
+    # Axe X = années entières : un tic par an, format entier (sinon Plotly insère des
+    # demi-années « 2022,5 » sur un axe numérique). Nouveau dict (BASE_LAYOUT.copy()
+    # est superficiel → ne pas muter xaxis en place).
+    lo["xaxis"] = {**lo["xaxis"], "tickmode": "linear", "dtick": 1, "tickformat": "d"}
+    if years_in_data:
+        lo["xaxis"]["tick0"] = int(years_in_data[0])
     fig.update_layout(
         title=dict(text=title, font_size=17),
         xaxis_title="Année",
@@ -827,11 +833,15 @@ def delay_evolution(
             annotation_font_color="#E63946",
         )
 
+    # Axe X = années entières : un tic par an, format entier (cf. line_evolution).
+    lo = _layout()
+    lo["xaxis"] = {**lo["xaxis"], "tickmode": "linear", "dtick": 1, "tickformat": "d",
+                   "tick0": int(d["annee"].min())}
     fig.update_layout(
         title=dict(text=f"Délais médians de PEC — {appareil} — {entity}", font_size=17),
         xaxis_title="Année",
         yaxis_title="Délai (jours)",
-        **_layout(),
+        **lo,
     )
     return fig
 
