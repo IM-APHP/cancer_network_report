@@ -36,7 +36,18 @@ from report_builder import (
     set_fake_data,
 )
 from chart_utils import slugify
-from referentiels import GHU_LIST   # source unique
+from referentiels import GHU_LIST, entrees_exclusion_non_matchees   # source unique
+
+
+def _verifier_exclusions(surv, mapping, delais_hop, mapping_delais):
+    """Garde-fou : signale les entrées de HOPITAUX_EXCLUS_COMPARAISON ne matchant
+    AUCUN hôpital sur AUCUNE des deux pages (survie ∪ délais) → coquille / variante
+    d'orthographe non couverte. Une entrée matchant une seule page est NORMALE."""
+    noms = (set(surv["entite"]) & set(mapping)) | (set(delais_hop["entite"]) & set(mapping_delais))
+    orphelines = entrees_exclusion_non_matchees(noms)
+    if orphelines:
+        print(f"  ⚠ Exclusion : {len(orphelines)} entrée(s) ne matchant AUCUN hôpital "
+              f"(coquille/variante ?) : {orphelines}")
 
 DATA_DIR     = Path(__file__).parent / "data"
 OUTPUT_DIR   = Path(__file__).parent / "output"
@@ -96,6 +107,8 @@ def build_all_reports(fictif: bool = True):
     delais_hop = load_delais_hopitaux(DATA_DIR)
     mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
     build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
+
+    _verifier_exclusions(surv, mapping, delais_hop, mapping_delais)
 
     print("\n  Rapports GHU individuels...")
     for ghu in GHU_LIST:
@@ -166,6 +179,7 @@ def main():
         delais_hop = load_delais_hopitaux(DATA_DIR)
         mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
         build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
+        _verifier_exclusions(surv, mapping, delais_hop, mapping_delais)
         return
 
     if args.ghu:

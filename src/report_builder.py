@@ -28,7 +28,7 @@ from chart_utils import (
     slugify,
     GHU_LIST, TREATMENT_COLS, REGIONAL_COLORS,
 )
-from referentiels import APPAREIL_RESIDUEL
+from referentiels import APPAREIL_RESIDUEL, HOPITAUX_EXCLUS_COMPARAISON, _est_exclu
 
 # ── Template HTML ──────────────────────────────────────────────────────────────
 
@@ -1319,10 +1319,16 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
     last_year = int(annees[-1]) if annees else None
     year_range = f"{annees[0]}–{annees[-1]}" if annees else ""
 
+    # Exclusion des sites SSR/gériatrie : journalisée une fois par page.
+    exclus = sorted({e for e in surv_df["entite"].unique()
+                     if e in mapping and _est_exclu(e)})
+    print(f"  Survie inter-hôpitaux : {len(exclus)} hôpital(aux) exclu(s) : {exclus}")
+
     def _a_des_donnees(appareil):
         h = surv_df[(surv_df.appareil == appareil) & (surv_df.organe == "TOTAL")
                     & (surv_df.stade == "I-III") & (surv_df.population == "tous")
-                    & (surv_df.annee == last_year) & (surv_df.entite.isin(mapping))]
+                    & (surv_df.annee == last_year) & (surv_df.entite.isin(mapping))
+                    & (~surv_df.entite.map(_est_exclu))]
         return not h.empty
 
     intro = (
@@ -1388,10 +1394,16 @@ def build_rapport_comparaison_hopitaux_delais(delais_df: pd.DataFrame, mapping: 
     last_year = int(annees[-1]) if annees else None
     year_range = f"{annees[0]}–{annees[-1]}" if annees else ""
 
+    # Exclusion des sites SSR/gériatrie : journalisée une fois par page.
+    exclus = sorted({e for e in delais_df["entite"].unique()
+                     if e in mapping and _est_exclu(e)})
+    print(f"  Délais inter-hôpitaux : {len(exclus)} hôpital(aux) exclu(s) : {exclus}")
+
     def _a_des_donnees(appareil):
         h = delais_df[(delais_df.appareil == appareil) & (delais_df.organe == "TOTAL")
                       & (delais_df.annee == last_year) & (delais_df.entite.isin(mapping))
-                      & (delais_df.delai_global_median.notna())]
+                      & (delais_df.delai_global_median.notna())
+                      & (~delais_df.entite.map(_est_exclu))]
         return not h.empty
 
     intro = (

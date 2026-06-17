@@ -52,7 +52,7 @@ TREATMENT_COLS = {
     "nb_sejours_palliatifs":      "Soins palliatifs",
 }
 
-from referentiels import GHU_LIST, APPAREIL_RESIDUEL   # source unique (réexporté pour report_builder)
+from referentiels import GHU_LIST, APPAREIL_RESIDUEL, _est_exclu   # source unique (réexporté pour report_builder)
 
 # ── Style global ───────────────────────────────────────────────────────────────
 
@@ -727,6 +727,8 @@ def survival_hospital_comparison(
     base = base[base["annee"] == annee]
 
     hosp = base[base["entite"].isin(mapping)].copy()
+    # Exclusion des sites SSR/gériatrie (matching normalisé, cf. referentiels._est_exclu).
+    hosp = hosp[~hosp["entite"].map(_est_exclu)]
     if hosp.empty:
         fig = go.Figure()
         fig.add_annotation(text="Pas de données de survie pour ce périmètre",
@@ -812,6 +814,8 @@ def delay_hospital_comparison(
     base = base[base["annee"] == annee]
 
     hosp = base[base["entite"].isin(mapping)].copy()
+    # Exclusion des sites SSR/gériatrie (matching normalisé, cf. referentiels._est_exclu).
+    hosp = hosp[~hosp["entite"].map(_est_exclu)]
     # un hôpital sans délai global (NaN) n'a rien à classer → exclu
     if "delai_global_median" in hosp.columns:
         hosp = hosp[hosp["delai_global_median"].notna()]
