@@ -70,9 +70,13 @@ def _coercer(df, cols, label):
         orig = df[c]
         brut = orig.astype(str)
         num = _to_num(orig)
-        # « non vide » = cellule réellement renseignée (``notna`` car en pandas 2.x
-        # ``astype(str)`` laisse les None en NaN flottant, pas en « None »).
-        non_vide = orig.notna() & (brut.str.strip() != "") & (~brut.str.strip().str.lower().isin(["nan", "none"]))
+        strip = brut.str.strip()
+        # Marqueurs de cellule VIDE des vraies données : chaîne vide, NaN, OU uniquement
+        # des points (« . », « .. » : convention « ligne vide » du canceroBR réel). On les
+        # exclut du diagnostic — ce ne sont pas de vraies valeurs non numériques.
+        vide = ((strip == "") | strip.str.fullmatch(r"\.+").fillna(False)
+                | strip.str.lower().isin(["nan", "none"]))
+        non_vide = orig.notna() & ~vide
         formate = brut.str.contains(r"[ \xa0,]", regex=True, na=False)
         recuperes.update(brut[num.notna() & formate & non_vide].unique().tolist())
         masques.update(brut[num.isna() & non_vide].unique().tolist())
