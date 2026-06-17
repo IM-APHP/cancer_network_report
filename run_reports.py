@@ -31,7 +31,8 @@ from report_builder import (
     build_rapport_appareil,
     build_rapport_organe,
     build_rapport_comparaison_hopitaux,
-    load_aphp, load_regional, load_survival,
+    build_rapport_comparaison_hopitaux_delais,
+    load_aphp, load_regional, load_survival, load_delais_hopitaux,
     set_fake_data,
 )
 from chart_utils import slugify
@@ -90,6 +91,10 @@ def build_all_reports(fictif: bool = True):
     print("\n  Comparaison inter-hôpitaux (survie)...")
     mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
     build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
+
+    print("\n  Comparaison inter-hôpitaux (délais)...")
+    delais_hop = load_delais_hopitaux(DATA_DIR)
+    build_rapport_comparaison_hopitaux_delais(delais_hop, mapping, OUTPUT_DIR)
 
     print("\n  Rapports GHU individuels...")
     for ghu in GHU_LIST:
@@ -157,6 +162,8 @@ def main():
         surv = load_survival(DATA_DIR)
         mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
         build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
+        delais_hop = load_delais_hopitaux(DATA_DIR)
+        build_rapport_comparaison_hopitaux_delais(delais_hop, mapping, OUTPUT_DIR)
         return
 
     if args.ghu:

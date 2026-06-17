@@ -781,6 +781,96 @@ def survival_hospital_comparison(
     return fig
 
 
+# ── Comparaison inter-hôpitaux (délais) ────────────────────────────────────────
+
+# Modalités de délai superposées en marqueurs (couleurs sobres, distinctes des GHU).
+_DELAI_MODALITES = [
+    ("delai_chirurgie_median", "Chirurgie",      "circle",      "#264653"),
+    ("delai_chimio_median",    "Chimiothérapie", "square",      "#6D597A"),
+    ("delai_radio_median",     "Radiothérapie",  "triangle-up", "#9C6644"),
+]
+
+
+def delay_hospital_comparison(
+    df_aphp: pd.DataFrame,
+    mapping: dict,
+    appareil: str = "TOTAL",
+    organe: str = "TOTAL",
+    annee: int = None,
+) -> go.Figure:
+    """Barres du délai GLOBAL médian par hôpital, TRIÉES par délai croissant (plus
+    court = mieux) et COLORÉES par GHU (via ``mapping`` {hôpital → code GHU}).
+    Marqueurs superposés = délais chirurgie / chimio / radio (NaN → marqueur omis) ;
+    repères horizontaux du délai global AP-HP (trait plein) et par GHU (pointillés).
+
+    Pendant de ``survival_hospital_comparison`` côté délais — axe Y ancré à 0 et tri
+    inversé (un délai court est meilleur, à l'inverse d'une survie élevée)."""
+    filt = (df_aphp["appareil"] == appareil) & (df_aphp["organe"] == organe)
+    base = df_aphp[filt].copy()
+    if annee is None and not base.empty:
+        annee = int(base["annee"].max())
+    base = base[base["annee"] == annee]
+
+    hosp = base[base["entite"].isin(mapping)].copy()
+    # un hôpital sans délai global (NaN) n'a rien à classer → exclu
+    if "delai_global_median" in hosp.columns:
+        hosp = hosp[hosp["delai_global_median"].notna()]
+    if hosp.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Pas de données de délai pour ce périmètre",
+                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
+
+    hosp["ghu"] = hosp["entite"].map(mapping)
+    hosp = hosp.sort_values("delai_global_median", ascending=True)   # plus court d'abord
+    ordre = list(hosp["entite"])
+
+    fig = go.Figure()
+    # une trace barre par GHU → légende groupée + couleur cohérente avec le reste du TDB
+    ghus_presents = [g for g in GHU_LIST if g in set(hosp["ghu"])]
+    for ghu in ghus_presents:
+        sub = hosp[hosp["ghu"] == ghu]
+        fig.add_trace(go.Bar(
+            x=sub["entite"], y=sub["delai_global_median"], name=ghu,
+            marker_color=get_color(ghu),
+            hovertemplate=f"%{{x}}<br>{ghu}<br>Délai global : <b>%{{y:.0f}} j</b><extra></extra>",
+        ))
+    # marqueurs par modalité (chirurgie / chimio / radio)
+    for col, label, symbol, color in _DELAI_MODALITES:
+        if col in hosp.columns and hosp[col].notna().any():
+            fig.add_trace(go.Scatter(
+                x=hosp["entite"], y=hosp[col], name=label,
+                mode="markers", marker=dict(symbol=symbol, size=8, color=color),
+                hovertemplate=f"%{{x}}<br>{label} : <b>%{{y:.0f}} j</b><extra></extra>",
+            ))
+
+    # repères de référence (délai GLOBAL uniquement) : par GHU (pointillés) puis AP-HP (plein)
+    for ghu in ghus_presents:
+        ref = df_aphp[(df_aphp["entite"] == ghu) & filt & (df_aphp["annee"] == annee)]
+        if not ref.empty and pd.notna(ref.iloc[0]["delai_global_median"]):
+            fig.add_hline(y=float(ref.iloc[0]["delai_global_median"]),
+                          line=dict(color=get_color(ghu), dash="dot", width=1))
+    ap = df_aphp[(df_aphp["entite"] == "AP-HP") & filt & (df_aphp["annee"] == annee)]
+    if not ap.empty and pd.notna(ap.iloc[0]["delai_global_median"]):
+        y_ap = float(ap.iloc[0]["delai_global_median"])
+        fig.add_hline(y=y_ap, line=dict(color="#1A1A2E", dash="dash", width=1.8),
+                      annotation_text=f"AP-HP {y_ap:.0f} j", annotation_position="top right")
+
+    lo = _layout(hovermode="closest")
+    lo["yaxis"] = dict(showgrid=True, gridcolor="#F0F0F0", zeroline=False,
+                       title="Délai médian (jours)", rangemode="tozero")
+    lo["xaxis"] = dict(showgrid=False, zeroline=False, categoryorder="array",
+                       categoryarray=ordre, tickangle=-45)
+    titre_loc = appareil if appareil != "TOTAL" else "toutes localisations"
+    fig.update_layout(
+        title=dict(text=f"Délais de prise en charge par hôpital — {titre_loc} ({annee})",
+                   font_size=16),
+        barmode="group",
+        **lo,
+    )
+    return fig
+
+
 # ── Délais de prise en charge ──────────────────────────────────────────────────
 
 def delay_evolution(

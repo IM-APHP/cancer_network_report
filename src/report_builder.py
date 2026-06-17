@@ -23,7 +23,7 @@ from chart_utils import (
     kpi_indicators, regional_comparison, fig_to_html,
     heatmap_organes, treemap_organes,
     survival_by_stage, survival_evolution, survival_hospital_comparison,
-    delay_evolution, delay_comparison_bar,
+    delay_evolution, delay_comparison_bar, delay_hospital_comparison,
     bar_appareils_years,
     slugify,
     GHU_LIST, TREATMENT_COLS, REGIONAL_COLORS,
@@ -629,6 +629,24 @@ def load_survival(data_dir: Path) -> pd.DataFrame:
     return df
 
 
+def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
+    """Délais médians niveau hôpital (+ AP-HP/GHU) pour la comparaison inter-hôpitaux.
+    Le grain APPAREIL (organe=TOTAL) est ABSENT de la source (Total + Organe seulement)
+    → reconstruit ici par ``_add_organe_total`` (moyenne des médianes par organe), comme
+    pour ``load_aphp``. Le grain global TOTAL/TOTAL vient déjà de la source (« Hop Total »)."""
+    fichier = data_dir / "delais_hopitaux_data.csv"
+    if not fichier.exists():
+        return pd.DataFrame(columns=["annee", "entite", "appareil", "organe",
+                                     "delai_global_median", "delai_chirurgie_median",
+                                     "delai_chimio_median", "delai_radio_median"])
+    df = pd.read_csv(fichier)
+    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    if df.empty:
+        return df
+    df = _add_organe_total(df)   # grain appareil (organe=TOTAL) reconstruit
+    return df
+
+
 # ── Rapport global AP-HP ───────────────────────────────────────────────────────
 
 def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
@@ -765,11 +783,14 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
 
     # Survie et délais — tableau par appareil
     surv_table = survival_delay_table(surv, aphp, "AP-HP")
+    _btn = ('background:#003189;color:white;padding:8px 18px;border-radius:7px;'
+            'text-decoration:none;font-weight:600;font-size:.85rem;white-space:nowrap;'
+            'display:inline-block;margin-left:8px')
     lien_cmp = (
-        '<a href="rapport_comparaison_hopitaux.html" style="display:inline-block;'
-        'background:#003189;color:white;padding:8px 18px;border-radius:7px;'
-        'text-decoration:none;font-weight:600;font-size:.85rem;white-space:nowrap">'
-        'Comparaison inter-hôpitaux →</a>'
+        f'<a href="rapport_comparaison_hopitaux.html" style="{_btn}">'
+        'Inter-hôpitaux — Survie →</a>'
+        f'<a href="comparaison_hopitaux_delais.html" style="{_btn}">'
+        'Inter-hôpitaux — Délais →</a>'
     )
     content += section("Survie et délais de prise en charge — par appareil",
                        surv_table, "survie", action=lien_cmp)
@@ -787,7 +808,8 @@ def build_rapport_global(data_dir: Path, output_dir: Path) -> Path:
         '<a href="#appareils">Par appareil</a>',
         '<a href="#survie">Survie & Délais</a>',
         '<a href="#nav-organes">Par organe</a>',
-        '<a href="rapport_comparaison_hopitaux.html">Inter-hôpitaux</a>',
+        '<a href="rapport_comparaison_hopitaux.html">Inter-hôpitaux survie</a>',
+        '<a href="comparaison_hopitaux_delais.html">Inter-hôpitaux délais</a>',
     ] if l])
 
     html = _render_page(year_range,
@@ -1339,7 +1361,9 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
     nav = "\n".join([
         '<a href="index.html">← Accueil AP-HP</a>',
         '<a href="#global">Comparaison globale</a>',
-    ] + nav_app)
+    ] + nav_app + [
+        '<a href="comparaison_hopitaux_delais.html">Délais →</a>',   # cross-link réciproque
+    ])
 
     html = _render_page(year_range,
         title="Comparaison inter-hôpitaux — Survie",
@@ -1349,6 +1373,70 @@ def build_rapport_comparaison_hopitaux(surv_df: pd.DataFrame, mapping: dict,
         date=datetime.now().strftime("%d/%m/%Y"),
     )
     out = output_dir / "rapport_comparaison_hopitaux.html"
+    out.write_text(html, encoding="utf-8")
+    print(f"  → {out}")
+    return out
+
+
+def build_rapport_comparaison_hopitaux_delais(delais_df: pd.DataFrame, mapping: dict,
+                                              output_dir: Path) -> Path:
+    """Page « Comparaison inter-hôpitaux — Délais » : délai global médian par hôpital,
+    trié CROISSANT (plus court = mieux), coloré par GHU, marqueurs des modalités
+    (chir/chimio/radio), repères AP-HP/GHU. Comparaison globale (TOTAL/TOTAL) puis
+    déclinaison par grand appareil (sections non vides). Calque de la page survie."""
+    annees = sorted(delais_df["annee"].unique()) if not delais_df.empty else []
+    last_year = int(annees[-1]) if annees else None
+    year_range = f"{annees[0]}–{annees[-1]}" if annees else ""
+
+    def _a_des_donnees(appareil):
+        h = delais_df[(delais_df.appareil == appareil) & (delais_df.organe == "TOTAL")
+                      & (delais_df.annee == last_year) & (delais_df.entite.isin(mapping))
+                      & (delais_df.delai_global_median.notna())]
+        return not h.empty
+
+    intro = (
+        '<p style="color:#6C757D;font-size:.9rem;margin-bottom:18px">'
+        'Délai global médian de prise en charge (barres) par hôpital, avec les délais '
+        'par modalité (<b>chirurgie, chimiothérapie, radiothérapie</b>) en marqueurs. '
+        'Les hôpitaux sont <b>colorés par GHU</b> et triés par délai <b>croissant</b> '
+        '(un délai plus court est meilleur). Le trait plein noir marque la référence '
+        '<b>AP-HP</b> ; les pointillés colorés, la référence de chaque <b>GHU</b>.</p>'
+    )
+
+    content = ""
+    # 1. Comparaison globale (toutes localisations)
+    fig_glob = delay_hospital_comparison(delais_df, mapping, appareil="TOTAL",
+                                         organe="TOTAL", annee=last_year)
+    content += section("Comparaison globale — toutes localisations",
+                       intro + chart_card(fig_to_html(fig_glob), "full"),
+                       "global")
+
+    # 2. Déclinaison par grand appareil (sections non vides)
+    nav_app = []
+    for app in _APPAREILS_COMPARAISON:
+        if not _a_des_donnees(app):
+            continue
+        anchor = "cmp-" + slugify(app)
+        fig = delay_hospital_comparison(delais_df, mapping, appareil=app,
+                                        organe="TOTAL", annee=last_year)
+        content += section(app.capitalize(), chart_card(fig_to_html(fig), "full"), anchor)
+        nav_app.append(f'<a href="#{anchor}">{app.capitalize()}</a>')
+
+    nav = "\n".join([
+        '<a href="index.html">← Accueil AP-HP</a>',
+        '<a href="#global">Comparaison globale</a>',
+    ] + nav_app + [
+        '<a href="rapport_comparaison_hopitaux.html">Survie →</a>',   # cross-link réciproque
+    ])
+
+    html = _render_page(year_range,
+        title="Comparaison inter-hôpitaux — Délais",
+        subtitle=f"Délais de PEC par hôpital, groupés par GHU · {year_range} · Indicateurs OECI",
+        nav_links=nav,
+        content=content,
+        date=datetime.now().strftime("%d/%m/%Y"),
+    )
+    out = output_dir / "comparaison_hopitaux_delais.html"
     out.write_text(html, encoding="utf-8")
     print(f"  → {out}")
     return out

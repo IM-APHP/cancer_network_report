@@ -200,9 +200,11 @@ def _colonnes_mediane_delais(ws):
     return res
 
 
-def _frame_delais(path, annee):
+def _frame_delais(path, annee, niveaux=("AP-HP", "GHU")):
     # NB : chargement normal (pas read_only) — l'accès aléatoire ws.cell(r, c) est
     # O(n) par appel en mode read_only et rend la lecture pathologiquement lente.
+    # ``niveaux`` sélectionne les niveaux d'agrégation conservés : par défaut
+    # AP-HP+GHU (aphp_data) ; inclure « Hôpital » pour la comparaison inter-hôpitaux.
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb["Délais PEC"]
     colmap = _colonnes_mediane_delais(ws)   # dims : 1 Niveau,2 GHU,3 Hôpital,4 Appareil,5 Organe
@@ -212,7 +214,7 @@ def _frame_delais(path, annee):
         if niv not in NIVEAU_MAP:
             continue
         agg, gran = NIVEAU_MAP[niv]
-        if agg not in ("AP-HP", "GHU"):
+        if agg not in niveaux:
             continue
         ent = _resoudre_entite(agg, ws.cell(r, 2).value, ws.cell(r, 3).value)
         if ent is None:
@@ -403,6 +405,34 @@ def charger_oeci(dossier="data", fictif=True):
     else:
         df_survie = df_survie[COLS_SURVIE].reset_index(drop=True)
     return df_aphp, df_survie
+
+
+# Schéma des délais par hôpital (clé + 4 médianes de délai ; pas de comptes).
+COLS_DELAIS_HOP = ["annee", "entite", "appareil", "organe"] + MEDIANES_APHP
+
+
+def charger_delais_hopitaux(dossier="data", fictif=True):
+    """Délais médians de PEC au niveau HÔPITAL (+ AP-HP & GHU pour les repères),
+    pour la page de comparaison inter-hôpitaux des délais. Source : onglet « Délais
+    PEC », granularités livrées = Total et Organe (PAS de niveau appareil → le grain
+    appareil est reconstruit côté report_builder, comme pour l'aphp_data).
+
+    Renvoie une ligne par (annee, entite, appareil, organe) ; entite ∈ AP-HP + GHU +
+    Hôpital. Schéma vide au bon format si la feuille est absente/vide."""
+    fichiers = _fichiers_oeci(dossier, fictif)
+    if not fichiers:
+        mode = "fictif" if fictif else "réel"
+        raise FileNotFoundError(f"Aucun fichier OECI ({mode}) dans {dossier!r}.")
+    cadres = [_frame_delais(p, a, niveaux=("AP-HP", "GHU", "Hôpital"))
+              for a, p in fichiers]
+    df = pd.concat(cadres, ignore_index=True) if cadres else pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame(columns=COLS_DELAIS_HOP)
+    # Coercition numérique des médianes (vraies données : « ns »/« - » → NaN).
+    for col in MEDIANES_APHP:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df[COLS_DELAIS_HOP].reset_index(drop=True)
 
 
 def mapping_hopital_ghu(dossier="data", fictif=True):
