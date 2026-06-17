@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import fill_fake_data
 from export_internes import exporter_csv
-from pivot_loader import mapping_hopital_ghu
+from pivot_loader import mapping_hopital_ghu, mapping_hopital_ghu_delais
 from report_builder import (
     build_rapport_global,
     build_rapport_ghu,
@@ -94,7 +94,8 @@ def build_all_reports(fictif: bool = True):
 
     print("\n  Comparaison inter-hôpitaux (délais)...")
     delais_hop = load_delais_hopitaux(DATA_DIR)
-    build_rapport_comparaison_hopitaux_delais(delais_hop, mapping, OUTPUT_DIR)
+    mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
+    build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
 
     print("\n  Rapports GHU individuels...")
     for ghu in GHU_LIST:
@@ -163,7 +164,8 @@ def main():
         mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
         build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
         delais_hop = load_delais_hopitaux(DATA_DIR)
-        build_rapport_comparaison_hopitaux_delais(delais_hop, mapping, OUTPUT_DIR)
+        mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
+        build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
         return
 
     if args.ghu:

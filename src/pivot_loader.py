@@ -466,6 +466,37 @@ def mapping_hopital_ghu(dossier="data", fictif=True):
     return mapping
 
 
+def mapping_hopital_ghu_delais(dossier="data", fictif=True):
+    """Rattachement {hôpital → code GHU} NATIF de l'onglet « Délais PEC », pour la
+    comparaison inter-hôpitaux des délais. Indispensable car « Délais PEC » nomme les
+    hôpitaux DIFFÉREMMENT de « Survie globale » (accents/traits d'union, formes/sites
+    distincts) : réutiliser le mapping survie n'en rattacherait qu'une partie. Ici le
+    GHU est porté par la ligne hôpital elle-même (col 2, forme courte « AP-HP.Centre »
+    résolue par ``_code_ghu``), donc aucune réconciliation de noms n'est nécessaire.
+
+    Lignes de niveau Hôpital (``NIVEAU_MAP`` standard) ; hôpital = col 3, GHU = col 2 ;
+    vide/non résolu → ignoré (jamais d'exception). Union de tous les millésimes."""
+    fichiers = _fichiers_oeci(dossier, fictif)
+    if not fichiers:
+        mode = "fictif" if fictif else "réel"
+        raise FileNotFoundError(f"Aucun fichier OECI ({mode}) dans {dossier!r}.")
+    mapping = {}
+    for _, path in fichiers:
+        wb = openpyxl.load_workbook(path, data_only=True)   # cf. CLAUDE.md : pas de read_only
+        if "Délais PEC" not in wb.sheetnames:
+            continue
+        ws = wb["Délais PEC"]
+        for r in range(3, ws.max_row + 1):       # dims : 1 Niveau, 2 GHU, 3 Hôpital
+            niv = ws.cell(r, 1).value
+            if niv not in NIVEAU_MAP or NIVEAU_MAP[niv][0] != "Hôpital":
+                continue
+            hop = ws.cell(r, 3).value
+            code = _code_ghu(ws.cell(r, 2).value)
+            if hop not in (None, "") and code:
+                mapping.setdefault(str(hop).strip(), code)
+    return mapping
+
+
 # ─────────────────────────── validation standalone ─────────────────────────
 def _valider(df_aphp, df_survie):
     pb = []
