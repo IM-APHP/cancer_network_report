@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from pivot_loader import charger_oeci, charger_delais_hopitaux   # noqa: E402
 from regional_loader import charger_regional   # noqa: E402
 from referentiels import ANNEE_MIN, ANNEE_MAX  # noqa: E402
+from format_long import tables_vers_long       # noqa: E402
 
 # Gabarits réels (format réel, vides pour l'instant) : versionnés dans templates/.
 TEMPLATES = os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -85,8 +86,9 @@ def _filtrer_periode(df):
 
 def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     """Lit les xlsx (fictif → ``data/*_fictif.xlsx`` ; réel → gabarits ``templates/``)
-    et écrit les 3 CSV internes dans ``dossier_data``. ``dossier_source`` force le
-    répertoire des xlsx sources (défaut : data/ en fictif, templates/ en réel)."""
+    et écrit le fichier pivot LONG unique ``donnees.csv`` dans ``dossier_data`` (cf.
+    contrat_donnees_pivot.md). ``dossier_source`` force le répertoire des xlsx sources
+    (défaut : data/ en fictif, templates/ en réel)."""
     if dossier_source is None:
         dossier_source = dossier_data if fictif else TEMPLATES
     os.makedirs(dossier_data, exist_ok=True)
@@ -110,23 +112,21 @@ def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     df_survie = _survie_niveau_appareil(df_survie)
 
     # Restriction de la période affichée (prod) : ANNEE_MIN..ANNEE_MAX inclus.
-    # Le régional source couvre 2016-2025 ; on coupe avant d'écrire les CSV.
+    # Le régional source couvre 2016-2025 ; on coupe avant d'écrire les données.
     df_aphp       = _filtrer_periode(df_aphp)
     df_survie     = _filtrer_periode(df_survie)
     df_regional   = _filtrer_periode(df_regional)
     df_delais_hop = _filtrer_periode(df_delais_hop)
     print(f"  Période restreinte à {ANNEE_MIN}-{ANNEE_MAX}")
 
-    chemins = {
-        "aphp_data.csv": df_aphp,
-        "survival_data.csv": df_survie,
-        "regional_data.csv": df_regional,
-        "delais_hopitaux_data.csv": df_delais_hop,
-    }
-    for nom, df in chemins.items():
-        out = os.path.join(dossier_data, nom)
-        df.to_csv(out, index=False, encoding="utf-8")
-        print(f"  → {nom:<20} {len(df):>7,} lignes, {len(df.columns)} colonnes")
+    # Format pivot LONG unique (cf. contrat_donnees_pivot.md) : on melt les 4 tables
+    # larges en un seul donnees.csv. Les vues larges sont reconstruites au chargement
+    # (report_builder.load_*). Les anciens 4 CSV ne sont plus produits.
+    long = tables_vers_long(df_aphp, df_survie, df_regional, df_delais_hop)
+    out = os.path.join(dossier_data, "donnees.csv")
+    long.to_csv(out, index=False, encoding="utf-8")
+    print(f"  → donnees.csv  {len(long):>9,} lignes · "
+          f"{long['variable'].nunique()} variables · sources {sorted(long['source'].unique())}")
     return None
 
 
