@@ -29,6 +29,7 @@ from chart_utils import (
     GHU_LIST, TREATMENT_COLS, REGIONAL_COLORS,
 )
 from referentiels import APPAREIL_RESIDUEL, HOPITAUX_EXCLUS_COMPARAISON, _est_exclu
+from format_long import pivoter_simple, pivoter_survie
 
 # ── Template HTML ──────────────────────────────────────────────────────────────
 
@@ -577,25 +578,62 @@ _ETAB_MAP = {
 }
 
 
+# ── Chargement depuis le format pivot LONG (donnees.csv) ───────────────────────
+# Le stockage est long ; les consommateurs reçoivent des vues LARGES via les load_*,
+# qui filtrent une tranche (source/niveau/variable) puis pivotent variable→colonnes
+# (cf. contrat_donnees_pivot.md §7). Colonnes larges figées (ordre/présence garantis).
+
+_COLS_APHP = ["annee", "entite", "appareil", "organe",
+              "nb_patients", "nb_nouveaux_patients",
+              "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
+              "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
+              "delai_global_median", "delai_chirurgie_median",
+              "delai_chimio_median", "delai_radio_median"]
+_COLS_REGIONAL = ["annee", "entite", "appareil", "organe",
+                  "nb_patients", "nb_nouveaux_patients",
+                  "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
+                  "nb_sejours_radiotherapie", "nb_sejours_palliatifs"]
+_COLS_SURVIE = ["annee", "entite", "appareil", "organe", "stade", "population",
+                "nb_patients_stade", "survie_1an", "survie_5ans"]
+_COLS_DELAIS_HOP = ["annee", "entite", "appareil", "organe",
+                    "delai_global_median", "delai_chirurgie_median",
+                    "delai_chimio_median", "delai_radio_median"]
+
+
+def _charger_long(data_dir: Path) -> pd.DataFrame:
+    """Lit le fichier pivot long unique ``donnees.csv``."""
+    df = pd.read_csv(data_dir / "donnees.csv")
+    return df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")],
+                   errors="ignore")
+
+
+def _reindex_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    """Garantit la présence et l'ordre des colonnes larges attendues (une variable
+    absente de l'extrait → colonne vide, jamais de KeyError côté consommateurs)."""
+    for c in cols:
+        if c not in df.columns:
+            df[c] = pd.NA
+    return df[cols]
+
+
 def load_aphp(data_dir: Path) -> pd.DataFrame:
-    df = pd.read_csv(data_dir / "aphp_data.csv")
-    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    long = _charger_long(data_dir)
+    df = pivoter_simple(long, "DIM APHP", ["aphp", "ghu"])
+    df = _reindex_cols(df, _COLS_APHP)
     df = _add_organe_total(df)
     df = _add_appareil_total(df)
     return df
 
 
 def load_regional(data_dir: Path) -> pd.DataFrame:
-    df = pd.read_csv(data_dir / "regional_data.csv")
-    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
-    # Renommage colonne entite
-    if "entite" not in df.columns and "type_etab" in df.columns:
-        df = df.rename(columns={"type_etab": "entite"})
-    # Normalisation des valeurs
+    long = _charger_long(data_dir)
+    df = pivoter_simple(long, "BN", ["aphp", "type_etab"])
+    df = _reindex_cols(df, _COLS_REGIONAL)
+    # Normalisation des valeurs (idem ancienne lecture CSV) : libellés établissement
+    # et noms d'appareils/organes régionaux → conventions AP-HP.
     df["entite"]   = df["entite"].replace(_ETAB_MAP)
     df["appareil"] = df["appareil"].replace(_APPAREIL_MAP)
-    if "organe" in df.columns:
-        df["organe"] = df["organe"].replace({"Total Organe": "TOTAL"})
+    df["organe"]   = df["organe"].replace({"Total Organe": "TOTAL"})
     return df
 
 
@@ -624,9 +662,9 @@ def regional_disponible(reg: pd.DataFrame) -> bool:
 
 
 def load_survival(data_dir: Path) -> pd.DataFrame:
-    df = pd.read_csv(data_dir / "survival_data.csv")
-    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
-    return df
+    long = _charger_long(data_dir)
+    df = pivoter_survie(long, source="EDS APHP")
+    return _reindex_cols(df, _COLS_SURVIE)
 
 
 def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
@@ -634,16 +672,21 @@ def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
     Le grain APPAREIL (organe=TOTAL) est ABSENT de la source (Total + Organe seulement)
     → reconstruit ici par ``_add_organe_total`` (moyenne des médianes par organe), comme
     pour ``load_aphp``. Le grain global TOTAL/TOTAL vient déjà de la source (« Hop Total »)."""
-    fichier = data_dir / "delais_hopitaux_data.csv"
-    if not fichier.exists():
-        return pd.DataFrame(columns=["annee", "entite", "appareil", "organe",
-                                     "delai_global_median", "delai_chirurgie_median",
-                                     "delai_chimio_median", "delai_radio_median"])
-    df = pd.read_csv(fichier)
-    df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
+    long = _charger_long(data_dir)
+    # Niveaux aphp/ghu (repères AP-HP/GHU des graphiques) + hopital (les barres). Les
+    # délais aphp/ghu viennent de la tranche DIM APHP commune (identiques à load_aphp).
+    df = pivoter_simple(long, "DIM APHP", ["aphp", "ghu", "hopital"],
+                        variables=_COLS_DELAIS_HOP[4:], reconstruire_nouveaux=False)
+    df = _reindex_cols(df, _COLS_DELAIS_HOP)
     if df.empty:
         return df
-    df = _add_organe_total(df)   # grain appareil (organe=TOTAL) reconstruit
+    # Un délai 0 = ABSENT (case OECI non renseignée, 0-fill du merge patients/séjours
+    # côté DIM APHP), pas une vraie médiane de 0 jour : on le neutralise (→ NaN) pour
+    # qu'il ne pollue PAS la moyenne reconstruite par appareil. Les vraies lignes de
+    # délais (source « Délais PEC ») ne contiennent jamais de 0.
+    delais = _COLS_DELAIS_HOP[4:]
+    df[delais] = df[delais].replace(0, float("nan"))
+    df = _add_organe_total(df)   # grain appareil (organe=TOTAL) reconstruit (moyenne NaN-safe)
     return df
 
 
