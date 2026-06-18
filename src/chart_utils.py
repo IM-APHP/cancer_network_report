@@ -26,7 +26,8 @@ COLORS = {
     "PSPH":        "#96CEB4",
     # Modes de prise en charge
     "Chirurgie":         "#2196F3",
-    "Chimiothérapie":    "#E63946",
+    "Chimiothérapie":    "#E63946",   # séjours « DP chimio » (sens strict)
+    "Traitement médical":"#E63946",   # délai du parcours d'oncologie médicale (bloc MEDECINE)
     "Radiothérapie":     "#2A9D8F",
     "Soins palliatifs":  "#F4A261",
     # Misc
@@ -787,9 +788,9 @@ def survival_hospital_comparison(
 
 # Modalités de délai superposées en marqueurs (couleurs sobres, distinctes des GHU).
 _DELAI_MODALITES = [
-    ("delai_chirurgie_median", "Chirurgie",      "circle",      "#264653"),
-    ("delai_chimio_median",    "Chimiothérapie", "square",      "#6D597A"),
-    ("delai_radio_median",     "Radiothérapie",  "triangle-up", "#9C6644"),
+    ("delai_chirurgie_median", "Chirurgie",          "circle",      "#264653"),
+    ("delai_traitement_medical_median", "Traitement médical", "square",      "#6D597A"),
+    ("delai_radio_median",     "Radiothérapie",      "triangle-up", "#9C6644"),
 ]
 
 
@@ -802,7 +803,7 @@ def delay_hospital_comparison(
 ) -> go.Figure:
     """Barres du délai GLOBAL médian par hôpital, TRIÉES par délai croissant (plus
     court = mieux) et COLORÉES par GHU (via ``mapping`` {hôpital → code GHU}).
-    Marqueurs superposés = délais chirurgie / chimio / radio (NaN → marqueur omis) ;
+    Marqueurs superposés = délais chirurgie / traitement médical / radio (NaN → marqueur omis) ;
     repères horizontaux du délai global AP-HP (trait plein) et par GHU (pointillés).
 
     Pendant de ``survival_hospital_comparison`` côté délais — axe Y ancré à 0 et tri
@@ -839,7 +840,7 @@ def delay_hospital_comparison(
             marker_color=get_color(ghu),
             hovertemplate=f"%{{x}}<br>{ghu}<br>Délai global : <b>%{{y:.0f}} j</b><extra></extra>",
         ))
-    # marqueurs par modalité (chirurgie / chimio / radio)
+    # marqueurs par modalité (chirurgie / traitement médical / radio)
     for col, label, symbol, color in _DELAI_MODALITES:
         if col in hosp.columns and hosp[col].notna().any():
             fig.add_trace(go.Scatter(
@@ -900,7 +901,7 @@ def delay_evolution(
     delay_cols = {
         "delai_global_median":    ("Délai global",        "#1A1A2E"),
         "delai_chirurgie_median": ("Chirurgie",           "#2196F3"),
-        "delai_chimio_median":    ("Chimiothérapie",      "#E63946"),
+        "delai_traitement_medical_median":    ("Traitement médical",  "#E63946"),
         "delai_radio_median":     ("Radiothérapie",       "#2A9D8F"),
     }
 

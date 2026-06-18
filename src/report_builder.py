@@ -521,7 +521,7 @@ def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
         "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
     ]
     delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
-                               "delai_chimio_median", "delai_radio_median"] if c in df.columns]
+                               "delai_traitement_medical_median", "delai_radio_median"] if c in df.columns]
     rows_to_add = []
     for (entite, annee, appareil), grp in df[df["appareil"] != "TOTAL"].groupby(
         ["entite", "annee", "appareil"]
@@ -550,7 +550,7 @@ def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
         "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
     ]
     delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
-                               "delai_chimio_median", "delai_radio_median"] if c in df.columns]
+                               "delai_traitement_medical_median", "delai_radio_median"] if c in df.columns]
     org_total = df[df["organe"] == "TOTAL"]
     agg = org_total.groupby(["entite", "annee"])[num_cols].sum().reset_index()
     if delay_cols:
@@ -588,7 +588,7 @@ _COLS_APHP = ["annee", "entite", "appareil", "organe",
               "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
               "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
               "delai_global_median", "delai_chirurgie_median",
-              "delai_chimio_median", "delai_radio_median"]
+              "delai_traitement_medical_median", "delai_radio_median"]
 _COLS_REGIONAL = ["annee", "entite", "appareil", "organe",
                   "nb_patients", "nb_nouveaux_patients",
                   "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
@@ -597,7 +597,7 @@ _COLS_SURVIE = ["annee", "entite", "appareil", "organe", "stade", "population",
                 "nb_patients_stade", "survie_1an", "survie_5ans"]
 _COLS_DELAIS_HOP = ["annee", "entite", "appareil", "organe",
                     "delai_global_median", "delai_chirurgie_median",
-                    "delai_chimio_median", "delai_radio_median"]
+                    "delai_traitement_medical_median", "delai_radio_median"]
 
 
 def _charger_long(data_dir: Path) -> pd.DataFrame:
@@ -1431,7 +1431,7 @@ def build_rapport_comparaison_hopitaux_delais(delais_df: pd.DataFrame, mapping: 
                                               output_dir: Path) -> Path:
     """Page « Comparaison inter-hôpitaux — Délais » : délai global médian par hôpital,
     trié CROISSANT (plus court = mieux), coloré par GHU, marqueurs des modalités
-    (chir/chimio/radio), repères AP-HP/GHU. Comparaison globale (TOTAL/TOTAL) puis
+    (chir/traitement médical/radio), repères AP-HP/GHU. Comparaison globale (TOTAL/TOTAL) puis
     déclinaison par grand appareil (sections non vides). Calque de la page survie."""
     annees = sorted(delais_df["annee"].unique()) if not delais_df.empty else []
     last_year = int(annees[-1]) if annees else None
@@ -1452,7 +1452,7 @@ def build_rapport_comparaison_hopitaux_delais(delais_df: pd.DataFrame, mapping: 
     intro = (
         '<p style="color:#6C757D;font-size:.9rem;margin-bottom:18px">'
         'Délai global médian de prise en charge (barres) par hôpital, avec les délais '
-        'par modalité (<b>chirurgie, chimiothérapie, radiothérapie</b>) en marqueurs. '
+        'par modalité (<b>chirurgie, traitement médical, radiothérapie</b>) en marqueurs. '
         'Les hôpitaux sont <b>colorés par GHU</b> et triés par délai <b>croissant</b> '
         '(un délai plus court est meilleur). Le trait plein noir marque la référence '
         '<b>AP-HP</b> ; les pointillés colorés, la référence de chaque <b>GHU</b>.</p>'

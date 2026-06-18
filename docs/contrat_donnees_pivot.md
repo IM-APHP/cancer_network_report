@@ -81,7 +81,7 @@ Un seul fichier, **`donnees.csv`** (format long / *tidy*). Une ligne = **une obs
 | `nb_sejours_palliatifs` | `BN`, `DIM APHP` | selon source | `tous` | — | effectif | ≥ 0 |
 | `delai_global_median` | `DIM APHP` | `aphp`, `ghu`, `hopital` | `tous` | — | jours | ≥ 0 |
 | `delai_chirurgie_median` | `DIM APHP` | `aphp`, `ghu`, `hopital` | `tous` | — | jours | ≥ 0 |
-| `delai_chimio_median` | `DIM APHP` | `aphp`, `ghu`, `hopital` | `tous` | — | jours | ≥ 0 |
+| `delai_traitement_medical_median` | `DIM APHP` | `aphp`, `ghu`, `hopital` | `tous` | — | jours | ≥ 0 |
 | `delai_radio_median` | `DIM APHP` | `aphp`, `ghu`, `hopital` | `tous` | — | jours | ≥ 0 |
 | `nb_patients_stade` | `EDS APHP` | `aphp`, `ghu`, `hopital` | `tous`, `nouveaux` | `I-III`, `IV` | effectif | ≥ 0 |
 | `survie_1an` | `EDS APHP` | `aphp`, `ghu`, `hopital` | `tous`, `nouveaux` | `I-III`, `IV` | % | 0–100 |
@@ -92,6 +92,8 @@ Un seul fichier, **`donnees.csv`** (format long / *tidy*). Une ligne = **une obs
 > « selon source » : sous `BN`, niveaux `aphp` + `type_etab` ; sous `DIM APHP`, niveaux `aphp` + `ghu` + `hopital` (comptes par hôpital **inclus**).
 >
 > **`age`** : s'applique potentiellement à toute `variable`, `age = tous` par défaut (chantier différé pour `pédiatrie`/`adultes`).
+>
+> **Délais** : la feuille source « Délais PEC » expose 4 blocs — `TOTAL` → `delai_global_median`, `CHIRURGIE` → `delai_chirurgie_median`, `MEDECINE` → `delai_traitement_medical_median`, `RADIOTHERAPIE` → `delai_radio_median`. Le bloc **`MEDECINE`** mesure le délai du **parcours de traitement médical** (oncologie médicale : chimiothérapie, thérapies ciblées, immunothérapie…), plus large que la seule chimiothérapie — d'où le nom `delai_traitement_medical_median`. À distinguer de `nb_sejours_chimiotherapie`, qui compte bien des séjours de chimiothérapie au sens strict (« DP chimio »).
 
 ---
 

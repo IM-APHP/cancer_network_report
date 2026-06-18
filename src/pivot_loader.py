@@ -55,7 +55,7 @@ COLS_APHP = [
     "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
     "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
     "delai_global_median", "delai_chirurgie_median",
-    "delai_chimio_median", "delai_radio_median",
+    "delai_traitement_medical_median", "delai_radio_median",
 ]
 COMPTES_APHP = [
     "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
@@ -63,7 +63,7 @@ COMPTES_APHP = [
 ]
 MEDIANES_APHP = [
     "delai_global_median", "delai_chirurgie_median",
-    "delai_chimio_median", "delai_radio_median",
+    "delai_traitement_medical_median", "delai_radio_median",
 ]
 COLS_SURVIE = [
     "annee", "entite", "appareil", "organe", "stade", "population",
@@ -178,8 +178,8 @@ def _bloc_delai_vers_champ(label):
         return "delai_global_median"
     if "CHIR" in u:
         return "delai_chirurgie_median"
-    if "MED" in u or "MÉDEC" in u:        # MÉDECINE ↔ chimiothérapie
-        return "delai_chimio_median"
+    if "MED" in u or "MÉDEC" in u:        # MÉDECINE ↔ traitement médical (oncologie médicale)
+        return "delai_traitement_medical_median"
     if "RADIO" in u or "RAFIO" in u or "THERAP" in u:
         return "delai_radio_median"
     return None
