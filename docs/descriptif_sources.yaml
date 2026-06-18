@@ -1,0 +1,244 @@
+# ════════════════════════════════════════════════════════════════════════════
+# descriptif_sources.yaml
+# Descriptif DÉCLARATIF des fichiers sources réels.
+# Aligné sur contrat_donnees_pivot.md (format pivot long, fichier donnees.csv).
+#
+# Principe (cf. décisions) :
+#   - Ce YAML décrit le FORMAT BRUT uniquement.
+#   - Le mapping « colonne brute → variable interne » reste EN CODE.
+#   - Conventions (niveau, forme GHU) déclarées EN LIGNE par feuille (chaque
+#     feuille peut venir d'un interlocuteur différent et donc varier).
+#   - La logique procédurale (reconstruction TOTAL, pondération survie,
+#     filtre de période) reste EN CODE, pilotée par ce YAML.
+#
+# Statut : v1 — « À CONFIRMER » levés sur indicateurs_oeci_2025_M12.xlsx (réel) et
+# les gabarits canceroBR de templates/ : libellés séjour/délais/survie, blocs Délais
+# (MEDECINE/RAFIOTHERAPIE), onglets d'âge régionaux, liste des hôpitaux.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ─── Modalités attendues partagées (détection de dérive) ───
+modalites_attendues:
+  ghu_codes:  [GHU Centre, GHU Mondor, GHU Nord, GHU PSSD, GHU PSL, GHU SUN]
+  type_etab:  [Clinique, CH, CHU, PSPH, CLCC]
+  niveau_interne: [aphp, ghu, hopital, type_etab]
+  # Hôpitaux AP-HP tels qu'écrits dans les fichiers OECI réels (relevé sur
+  # indicateurs_oeci_2025_M12.xlsx, feuille « Délais PEC », niveau Hôpital).
+  hopitaux:
+    [Ambroise Paré, Antoine Beclère, Armand Trousseau, Avicenne, Beaujon, Bichat,
+     Bicêtre, Bretonneau, Broca, Charles Foix, Cochin, Corentin Celton, Emile Roux,
+     Georges Clémenceau, Hegp, Henri Mondor, Hôtel-Dieu, Jean Verdier, Joffre,
+     Lariboisière, Louis Mourier, Necker, Paul Brousse, Pitie-Salpêtrière,
+     Raymond Poincaré, René Muret, Robert Debré, Rothschild, Saint-Antoine,
+     Saint-Louis, Sainte-Perine, Tenon]
+
+sources:
+
+  # ══════════════════════ OECI — un fichier par année ══════════════════════
+  oeci:
+    fichier: "indicateurs_oeci_*_M*.xlsx"      # exclut *_fictif
+    annee_depuis: nom_fichier                  # ex. indicateurs_oeci_2024_M12.xlsx → 2024
+
+    # Coercition par défaut (format FR) — surchargeable par feuille si besoin.
+    coercition:
+      milliers: [" ", "\u00a0"]                # espace + insécable (séparateur de milliers)
+      decimale: ","
+      pourcent: "%"
+      masque:  ["ns", "< 5", "-", "n.d.", "nd"]   # → NaN
+
+    feuilles:
+
+      # ───────────────────────── Indicateurs patient ─────────────────────────
+      indicateurs_patient:
+        nom: "Indicateurs patient"
+        source: "DIM APHP"
+        obligatoire: true
+        lignes_entete: 1
+        premiere_ligne_donnees: 2
+        dimensions: { niveau: 1, ghu: 2, hopital: 3, appareil: 4, organe: 5 }
+        granularite: niveau                    # encodée dans le libellé Niveau
+        niveau:                                # taxonomie INLINE (standard DIM)
+          "APHP Total":     { agg: aphp,    gran: total }
+          "APHP Organe":    { agg: aphp,    gran: organe }
+          "GH Total":       { agg: ghu,     gran: total }
+          "GH Organe":      { agg: ghu,     gran: organe }
+          "Hop Total":      { agg: hopital, gran: total }
+          "Hopital Organe": { agg: hopital, gran: organe }
+        ghu_forme: long                        # 'APHP.Centre-Université de Paris' → code (GHU_NOM2CODE)
+        mesures:
+          disposition: simple                  # une mesure par colonne (repérée par nom)
+          colonnes_utiles:                     # le CODE mappe ces noms bruts → variable interne
+            - "Nb patients"        # → nb_patients,  population=tous
+            - "Nvx patients"       # → nb_patients,  population=nouveaux
+          # Autres colonnes présentes mais NON mappées aujourd'hui :
+          #   Patients chir, Nvx patients chir, Patients chimio, Patients radio,
+          #   Patients SP, Nb morts hospi, Nb morts hospi avec SP
+
+      # ───────────────────────── Indicateurs séjour ──────────────────────────
+      indicateurs_sejour:
+        nom: "Indicateurs séjour"
+        source: "DIM APHP"
+        obligatoire: true
+        lignes_entete: 1
+        premiere_ligne_donnees: 2
+        dimensions: { niveau: 1, ghu: 2, hopital: 3, appareil: 4, organe: 5 }
+        granularite: niveau
+        niveau:                                # INLINE (identique au standard, mais propre à la feuille)
+          "APHP Total":     { agg: aphp,    gran: total }
+          "APHP Organe":    { agg: aphp,    gran: organe }
+          "GH Total":       { agg: ghu,     gran: total }
+          "GH Organe":      { agg: ghu,     gran: organe }
+          "Hop Total":      { agg: hopital, gran: total }
+          "Hopital Organe": { agg: hopital, gran: organe }
+        ghu_forme: long
+        mesures:
+          disposition: simple
+          colonnes_utiles:                     # libellés CONFIRMÉS sur le fichier réel
+            - "Séjours avec chirurgie"     # → nb_sejours_chirurgie
+            - "Séjours avec DP chimio"     # → nb_sejours_chimiotherapie
+            - "Séjours avec DP radioth"    # → nb_sejours_radiotherapie   (confirmé)
+            - "Séjours en soins palliatifs" # → nb_sejours_palliatifs     (confirmé)
+          # NOTE (réel) : en-tête sur 1 ligne. Colonnes voisines à NE PAS confondre :
+          #   'Séjous totaux' (sic), 'Séjours avec DP chimio 0 jour',
+          #   'Séjours Péd avec DP chimio 0 jour', 'Séjours Péd', 'Séjours hématologie',
+          #   'Séjours avec greffe de moelle osseuse', 'Autres séjours onco (...)'.
+          #   Le CODE sélectionne par nom exact les colonnes utiles ci-dessus.
+
+      # ───────────────────────── Survie globale (EDS) ────────────────────────
+      survie_globale:
+        nom: "Survie globale"
+        source: "EDS APHP"                     # ← autre système → conventions propres
+        obligatoire: true
+        lignes_entete: 4                       # population × horizon × stade × type
+        premiere_ligne_donnees: 5
+        dimensions: { niveau: 1, appareil: 2, organe: 3, ghu: 4, hopital: 5 }  # ORDRE DIFFÉRENT
+        granularite: cellules                  # appareil ET organe vides → TOTAL ; sinon organe
+        niveau:                                # INLINE par MOTS-CLÉS (libellés EDS : 'AP-HP Total', 'GHU organe', 'Hopital organe')
+          mode: mots_cles
+          mots_cles: { HOP: hopital, GH: ghu, "AP-HP": aphp }
+        ghu_forme: court                       # 'AP-HP.Centre' → code (GHU_NOM2CODE)
+        mesures:
+          disposition: plan_survie             # mesure repérée par combinaison d'en-tête
+          plan:                                # ligne d'en-tête portant chaque axe (libellés CONFIRMÉS)
+            population: 1                      # L1 : 'Tous les patients' / 'Nouveaux patients'  → tous / nouveaux
+            horizon:    2                      # L2 : 'Survie à 5 ans' / 'Survie à 1 an'  → survie_5ans / survie_1an
+            stade:      3                      # L3 : 'Stade I-III' / 'Stade IV'  → I-III / IV
+            # L4 : 'Nb patients ' (sic, espace final) → nb_patients_stade ; '% survie' → survie_*
+            # Bloc « Nb patients » présent par (population, horizon, stade) ; on retient
+            # celui du sous-bloc 5 ans (effectif identique 1 an / 5 ans).
+
+      # ───────────────────────── Délais PEC ──────────────────────────────────
+      delais_pec:
+        nom: "Délais PEC"
+        source: "DIM APHP"
+        obligatoire: true
+        lignes_entete: 2                       # L1 = blocs (TOTAL/CHIRURGIE/CHIMIO/RADIO), L2 = sous-colonnes
+        premiere_ligne_donnees: 3
+        dimensions: { niveau: 1, ghu: 2, hopital: 3, appareil: 4, organe: 5 }
+        granularite: niveau
+        niveau:                                # INLINE (standard)
+          "APHP Total":     { agg: aphp,    gran: total }
+          "APHP Organe":    { agg: aphp,    gran: organe }
+          "GH Total":       { agg: ghu,     gran: total }
+          "GH Organe":      { agg: ghu,     gran: organe }
+          "Hop Total":      { agg: hopital, gran: total }
+          "Hopital Organe": { agg: hopital, gran: organe }
+        ghu_forme: long
+        mesures:
+          disposition: blocs                   # mesure = (bloc de la ligne 1, sous-colonne de la ligne 2)
+          bloc_ligne: 1                        # 4 blocs de 5 colonnes (confirmé sur le réel)
+          sous_colonne: "Médiane délais"       # → delai_<bloc>_median
+          mapping_blocs:                       # bloc brut (libellés RÉELS, fautes de frappe source incluses) → suffixe interne
+            TOTAL:         global
+            CHIRURGIE:     chirurgie
+            MEDECINE:      chimio               # bloc « MEDECINE » = chimiothérapie
+            RAFIOTHERAPIE: radio                # sic (« RAFIOTHERAPIE » pour RADIOTHÉRAPIE)
+          # → delai_global_median, delai_chirurgie_median, delai_chimio_median, delai_radio_median
+          # Le CODE (pivot_loader._bloc_delai_vers_champ) mappe par MOTS-CLÉS (CHIR / MED /
+          # RADIO|RAFIO|THERAP / TOTAL) → tolérant à ces variantes orthographiques.
+
+      # ───────────────── Feuilles présentes mais NON consommées ──────────────
+      indicateurs_chirurgie:
+        nom: "Indicateurs chirurgie"
+        consommee: false
+        note: "Indicateurs qualité chir (% rehosp/rechir/décès) hors contrat actuel."
+      origine_geo:
+        nom: "Origine géo"
+        consommee: false
+      effectifs_recherche:
+        nom: "Effectifs recherche"
+        consommee: false
+        note: "Absente des extraits réels (ne pas en dépendre)."
+
+  # ════════════════════ RÉGIONAL — Base nationale PMSI (BN) ════════════════════
+  regional:
+    source: "BN"                               # tout le fichier
+    fichiers:
+      patients: "canceroBR_*_Pat_*.xlsx"
+      sejours:  "canceroBR_*_Sej_*.xlsx"
+    coercition:
+      milliers: [" ", "\u00a0"]
+      decimale: ","
+      pourcent: "%"
+      masque:  ["ns", "< 5", "-", "n.d.", "nd"]
+
+    # L'ÂGE est porté par les ONGLETS : 'Total' (= tous), '<18' (pédiatrie), '≥18' (adultes).
+    # On ne lit que 'Total' → age=tous. Les deux autres = chantier âge différé.
+    onglet_lu: "Total"                         # age = tous (confirmé)
+    onglets_age_differes: ["Age < 18 ans", "Age >= 18 ans"]   # noms exacts confirmés — non lus pour l'instant
+
+    feuilles:
+
+      total_patients:
+        fichier: patients
+        nom: "Total"
+        lignes_entete: 1
+        premiere_ligne_donnees: 2
+        # 8 colonnes de dimension par POSITION (normalisées par le loader)
+        dimensions:
+          niveau: 1
+          hopital_aphp: 2
+          finess: 3
+          raison: 4
+          statut: 5
+          appareil: 6
+          organe: 7
+          annee: 8
+        # entite : AP-HP si hopital_aphp == AP-HP, sinon type via statut (referentiels.STATUT2TYPE)
+        niveau:                                # taxonomie régionale (simple)
+          "Total":    { gran: total }          # appareil + organe → TOTAL
+          "Appareil": { gran: appareil }       # organe → TOTAL
+          "Organe":   { gran: organe }
+        mesures:
+          disposition: simple
+          colonnes_utiles:
+            - "Nb de patients"     # → nb_patients,  population=tous
+            - "Nouveaux patients"  # → nb_patients,  population=nouveaux
+
+      total_sejours:
+        fichier: sejours
+        nom: "Total"
+        lignes_entete: 2                       # blocs « 0 jour / >0 jour / Total »
+        premiere_ligne_donnees: 3
+        dimensions:
+          niveau: 1
+          hopital_aphp: 2
+          finess: 3
+          raison: 4
+          statut: 5
+          appareil: 6
+          organe: 7
+          annee: 8
+        niveau:
+          "Total":    { gran: total }
+          "Appareil": { gran: appareil }
+          "Organe":   { gran: organe }
+        mesures:
+          disposition: simple
+          colonnes_utiles:
+            - "Séjours avec chirurgie"     # apparaît 2× (0 jour + >0 jour) → SOMMÉES → nb_sejours_chirurgie
+            - "Séjours avec chimio"        # → nb_sejours_chimiotherapie
+            - "Séjours avec radiothérapie" # → nb_sejours_radiotherapie
+            - "Nb de séjours palliatifs"   # → nb_sejours_palliatifs
+
+    modalites_attendues:
+      type_etab: [Clinique, CH, CHU, PSPH, CLCC]
