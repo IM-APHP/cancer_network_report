@@ -150,9 +150,9 @@ sources:
           mapping_blocs:                       # bloc brut (libellés RÉELS, fautes de frappe source incluses) → suffixe interne
             TOTAL:         global
             CHIRURGIE:     chirurgie
-            MEDECINE:      chimio               # bloc « MEDECINE » = chimiothérapie
+            MEDECINE:      traitement_medical   # bloc « MEDECINE » = parcours d'oncologie médicale
             RAFIOTHERAPIE: radio                # sic (« RAFIOTHERAPIE » pour RADIOTHÉRAPIE)
-          # → delai_global_median, delai_chirurgie_median, delai_chimio_median, delai_radio_median
+          # → delai_global_median, delai_chirurgie_median, delai_traitement_medical_median, delai_radio_median
           # Le CODE (pivot_loader._bloc_delai_vers_champ) mappe par MOTS-CLÉS (CHIR / MED /
           # RADIO|RAFIO|THERAP / TOTAL) → tolérant à ces variantes orthographiques.
 

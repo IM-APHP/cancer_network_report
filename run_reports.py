@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import fill_fake_data
 from export_internes import exporter_csv
-from pivot_loader import mapping_hopital_ghu, mapping_hopital_ghu_delais
+from chargeur_long import mapping_hopital_ghu, mapping_hopital_ghu_delais
 from report_builder import (
     build_rapport_global,
     build_rapport_ghu,
