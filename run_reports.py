@@ -2,14 +2,14 @@
 run_reports.py
 Script maître — génère tous les rapports HTML en une commande.
 
-Chaîne (fictif) : templates/ → fill_fake_data → data/*.xlsx → export_internes →
-data/*.csv → report_builder → output/*.html. Auto-suffisante sur clone neuf
-(templates/ versionné, data/ recréé).
+Chaîne (fictif) : generateur_fictif → data/donnees.csv → report_builder →
+output/*.html. Auto-suffisante sur clone neuf (génération 100 % par code, AUCUN
+xlsx ni gabarit). En réel : chargeur YAML des vrais fichiers de data/ → donnees.csv.
 
 Usage :
     python run_reports.py              # Tout : données fictives + build
-    python run_reports.py --data-only  # Phase données uniquement (xlsx + CSV)
-    python run_reports.py --no-data    # Build uniquement, depuis les CSV existants
+    python run_reports.py --data-only  # Phase données uniquement (donnees.csv)
+    python run_reports.py --no-data    # Build uniquement, depuis donnees.csv
     python run_reports.py --real-data  # Source = fichiers réels (pas de génération fictive)
     python run_reports.py --ghu "GHU Nord"
     python run_reports.py --appareil "SEIN"
@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-import fill_fake_data
+from generateur_fictif import generer_donnees_long, HOPITAL2GHU
 from export_internes import exporter_csv
 from chargeur_long import mapping_hopital_ghu, mapping_hopital_ghu_delais
 from report_builder import (
@@ -51,30 +51,32 @@ def _verifier_exclusions(surv, mapping, delais_hop, mapping_delais):
 
 DATA_DIR     = Path(__file__).parent / "data"
 OUTPUT_DIR   = Path(__file__).parent / "output"
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-
-
-def _source_oeci_dir(fictif: bool) -> str:
-    """Répertoire des xlsx OECI pour les lectures qui nécessitent les xlsx (ex.
-    mapping hôpital→GHU). En prod, les fichiers réels sont dans data/ : on lit
-    data/ dans les deux modes (fictif et réel)."""
-    return str(DATA_DIR)
 
 
 def generate_data(fictif: bool = True):
-    """Phase données = (fictif) génération des xlsx depuis templates/ puis export
-    CSV ; (réel) export CSV directement depuis les fichiers réels. Dans les deux
-    cas, écrit les 3 CSV internes (aphp/survival/regional) dans data/."""
+    """Phase données → ``data/donnees.csv`` (format pivot long). En FICTIF : générateur
+    Option B (valeurs aléatoires depuis les référentiels, aucun xlsx). En RÉEL :
+    ingestion des vrais fichiers de data/ via le chargeur YAML."""
     DATA_DIR.mkdir(exist_ok=True)
     if fictif:
-        print("\n[1/2] Génération des fichiers fictifs (templates/ → data/*.xlsx)...")
-        fill_fake_data.main()
-        print("\n[2/2] Export interne (xlsx fictifs → 3 CSV)...")
-        exporter_csv(dossier_data=str(DATA_DIR), fictif=True)
+        print("\n[Option B] Génération fictive directe → donnees.csv...")
+        long = generer_donnees_long()
+        long.to_csv(DATA_DIR / "donnees.csv", index=False, encoding="utf-8")
+        print(f"  → donnees.csv  {len(long):>9,} lignes · sources {sorted(long['source'].unique())}")
     else:
-        print("\n[1/1] Export interne depuis les fichiers RÉELS (→ 3 CSV)...")
+        print("\n[Réel] Ingestion des fichiers RÉELS → donnees.csv...")
         exporter_csv(dossier_data=str(DATA_DIR), fictif=False,
                      dossier_source=str(DATA_DIR))
+
+
+def _mappings(fictif: bool):
+    """(mapping survie, mapping délais) hôpital→GHU. FICTIF : référentiel
+    ``HOPITAL2GHU`` (aucun xlsx) ; RÉEL : dérivé des feuilles « Survie globale » /
+    « Délais PEC » des vrais fichiers."""
+    if fictif:
+        return HOPITAL2GHU, HOPITAL2GHU
+    return (mapping_hopital_ghu(str(DATA_DIR), fictif=False),
+            mapping_hopital_ghu_delais(str(DATA_DIR), fictif=False))
 
 
 def build_all_reports(fictif: bool = True):
@@ -99,13 +101,13 @@ def build_all_reports(fictif: bool = True):
     print("\n  Page d'accueil (global AP-HP → index.html)...")
     build_rapport_global(DATA_DIR, OUTPUT_DIR)
 
+    mapping, mapping_delais = _mappings(fictif)
+
     print("\n  Comparaison inter-hôpitaux (survie)...")
-    mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
     build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
 
     print("\n  Comparaison inter-hôpitaux (délais)...")
     delais_hop = load_delais_hopitaux(DATA_DIR)
-    mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
     build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
 
     _verifier_exclusions(surv, mapping, delais_hop, mapping_delais)
@@ -174,10 +176,9 @@ def main():
 
     if args.comparaison_hopitaux:
         surv = load_survival(DATA_DIR)
-        mapping = mapping_hopital_ghu(_source_oeci_dir(fictif), fictif=fictif)
+        mapping, mapping_delais = _mappings(fictif)
         build_rapport_comparaison_hopitaux(surv, mapping, OUTPUT_DIR)
         delais_hop = load_delais_hopitaux(DATA_DIR)
-        mapping_delais = mapping_hopital_ghu_delais(_source_oeci_dir(fictif), fictif=fictif)
         build_rapport_comparaison_hopitaux_delais(delais_hop, mapping_delais, OUTPUT_DIR)
         _verifier_exclusions(surv, mapping, delais_hop, mapping_delais)
         return
