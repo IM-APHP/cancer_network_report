@@ -601,8 +601,9 @@ _COLS_DELAIS_HOP = ["annee", "entite", "appareil", "organe",
 
 
 def _charger_long(data_dir: Path) -> pd.DataFrame:
-    """Lit le fichier pivot long unique ``donnees.csv``."""
-    df = pd.read_csv(data_dir / "donnees.csv")
+    """Lit le fichier pivot long unique ``donnees.csv``. ``dtype`` forcé sur ``stade``
+    (majoritairement vide hors survie) pour éviter le DtypeWarning de pandas."""
+    df = pd.read_csv(data_dir / "donnees.csv", dtype={"stade": "string"})
     return df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")],
                    errors="ignore")
 

@@ -21,3 +21,6 @@ venv/
 
 # Claude Code (local)
 .claude/
+
+# Ignorer tous les fichiers ZIP (ex. exportés depuis Excel)
+*.zip

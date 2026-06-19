@@ -3,8 +3,8 @@
 """Chargeur RÉEL piloté par le YAML — ingestion des vrais fichiers sources vers le
 format pivot LONG unique (``data/donnees.csv``).
 
-Remplace le RÔLE D'INGESTION de ``pivot_loader`` + ``regional_loader`` : un seul
-moteur générique, dont la STRUCTURE des fichiers (feuilles, positions de dimensions,
+Seul point d'ingestion des fichiers sources réels : un moteur générique unique,
+dont la STRUCTURE des fichiers (feuilles, positions de dimensions,
 en-têtes, taxonomie de niveau, forme GHU, coercition) est déclarée dans
 ``docs/descriptif_sources.yaml`` (cf. ``contrat_donnees_pivot.md``). Le **mapping
 colonne/bloc/axe brut → variable interne** reste EN CODE (tables ci-dessous), keyé

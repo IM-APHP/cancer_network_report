@@ -3,8 +3,8 @@
 """Générateur fictif — Option B : produit ``data/donnees.csv`` (format pivot LONG du
 contrat) DIRECTEMENT depuis des référentiels de dimensions, SANS aucun xlsx ni loader.
 
-Remplace ``fill_fake_data`` + l'ingestion : aucune dépendance aux gabarits
-``templates/`` ni aux ``*_fictif.xlsx``. Valeurs aléatoires plausibles, seed fixe,
+Producteur fictif autonome : aucune dépendance à un gabarit ni à un xlsx
+(plus de fichiers `templates/` ni `*_fictif.xlsx`). Valeurs aléatoires plausibles, seed fixe,
 respectant le contrat (survie ∈ [0,100], délais ≥ 0, comptes ≥ 0 ; stade/population
 uniquement où applicable ; age=tous). Une MINORITÉ de valeurs de survie est masquée
 (non émise → « — » dans la démo).
