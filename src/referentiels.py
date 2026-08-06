@@ -20,6 +20,20 @@ GHU_LIST = ["GHU Centre", "GHU Mondor", "GHU Nord", "GHU PSSD", "GHU PSL", "GHU 
 # par appareil, mais son rapport reste généré et accessible via un lien dédié.
 APPAREIL_RESIDUEL = "Non décidable"
 
+
+def organe_publiable(organe) -> bool:
+    """Vrai si l'organe mérite une PAGE dédiée (rapport_organe_*). Exclut la sentinelle
+    ``TOTAL``, les valeurs manquantes (NaN), la catégorie « Non décidable » et les
+    résiduelles « Autre (…) ». Décision : ces catégories fourre-tout n'ont pas de page
+    HTML propre — leurs effectifs restent comptés dans les agrégats et graphiques.
+    NB : « Non décidable » comme ORGANE existe sous 12 appareils et « Autre (…) » sous
+    chacun ; leurs slugs entraient en collision (un seul fichier écrasé 12 fois)."""
+    if organe is None or organe != organe:            # None ou NaN (NaN != NaN)
+        return False
+    s = str(organe).strip()
+    return (s not in ("", "TOTAL", APPAREIL_RESIDUEL)
+            and s.lower() != "nan" and not s.startswith("Autre"))
+
 # Nom complet GHU (tel qu'écrit dans la colonne GHU des fichiers OECI) → code interne.
 # La feuille « Survie globale » utilise une variante COURTE des libellés (différente des
 # autres onglets) : on l'ajoute ici pour que _resoudre_entite couvre les deux conventions.

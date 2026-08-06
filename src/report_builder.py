@@ -28,7 +28,8 @@ from chart_utils import (
     slugify,
     GHU_LIST, TREATMENT_COLS, REGIONAL_COLORS,
 )
-from referentiels import APPAREIL_RESIDUEL, HOPITAUX_EXCLUS_COMPARAISON, _est_exclu
+from referentiels import (APPAREIL_RESIDUEL, HOPITAUX_EXCLUS_COMPARAISON, _est_exclu,
+                          organe_publiable)
 from format_long import pivoter_simple, pivoter_survie
 
 # ── Template HTML ──────────────────────────────────────────────────────────────
@@ -316,9 +317,12 @@ def organe_nav_links_html(aphp: pd.DataFrame, anchor_prefix: str = "rapport_orga
 
     def _bloc(app: str, force: bool = False) -> str:
         app_slug = slugify(app)
+        # Pages organe PUBLIABLES uniquement (« Non décidable », « Autre (…) », NaN
+        # exclus — pas de page dédiée, cf. referentiels.organe_publiable).
         orgs = sorted(
-            aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app) & (aphp.organe != "TOTAL")]
-            .organe.unique()
+            o for o in aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app)
+                            & (aphp.organe != "TOTAL")].organe.unique()
+            if organe_publiable(o)
         )
         if not orgs and not force:
             return ""
@@ -1243,11 +1247,12 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
         </div>
         """
     content += section("Évolution du nombre de patients", evo_html, "evolution")
-    # Liens organes pour cet appareil
+    # Liens organes pour cet appareil (pages publiables uniquement, cf. referentiels).
     app_slug_local = slugify(appareil)
     orgs_of_app = sorted(
-        aphp[(aphp.entite == "AP-HP") & (aphp.appareil == appareil) & (aphp.organe != "TOTAL")]
-        .organe.unique()
+        o for o in aphp[(aphp.entite == "AP-HP") & (aphp.appareil == appareil)
+                        & (aphp.organe != "TOTAL")].organe.unique()
+        if organe_publiable(o)
     )
     org_links_html = ""
     for org in orgs_of_app:

@@ -12,7 +12,9 @@ docstrings, libellés UI).
 ## Vue d'ensemble
 
 Générateur de tableau de bord HTML statique d'activité cancérologie pour l'AP-HP, aligné sur
-les indicateurs **OECI**. Produit ~520 pages HTML autonomes (Plotly embarqué) et les déploie
+les indicateurs **OECI**. Produit ~440 pages HTML autonomes (Plotly embarqué — les organes
+résiduels « Non décidable » / « Autre (…) » n'ont **pas de page dédiée**, cf.
+`referentiels.organe_publiable` ; leurs effectifs restent comptés dans les agrégats) et les déploie
 sur GitHub Pages via CI. Référentiel INCA (~14 appareils / ~56 organes). Couverture
 temporelle **2022–2025** (bornes `ANNEE_MIN`/`ANNEE_MAX` dans `referentiels.py`), déclinée
 AP-HP, 6 GHU, et hôpitaux.

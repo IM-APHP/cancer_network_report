@@ -38,7 +38,7 @@ from report_builder import (
     set_fake_data,
 )
 from chart_utils import slugify
-from referentiels import GHU_LIST, entrees_exclusion_non_matchees   # source unique
+from referentiels import GHU_LIST, entrees_exclusion_non_matchees, organe_publiable   # source unique
 
 
 def _verifier_exclusions(surv, mapping, delais_hop, mapping_delais):
@@ -150,10 +150,13 @@ def build_all_reports(fictif: bool = True, sequentiel: bool = False):
 
     appareils = sorted(aphp[aphp.appareil != "TOTAL"].appareil.unique())
 
-    # Organes par appareil
+    # Organes par appareil — pages PUBLIABLES uniquement (exclut « Non décidable »,
+    # « Autre (…) », NaN : catégories résiduelles sans page dédiée, cf. referentiels).
     organes_by_app = {}
     for app in appareils:
-        orgs = sorted(aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app) & (aphp.organe != "TOTAL")].organe.unique())
+        orgs = sorted(o for o in aphp[(aphp.entite == "AP-HP") & (aphp.appareil == app)
+                                      & (aphp.organe != "TOTAL")].organe.unique()
+                      if organe_publiable(o))
         organes_by_app[app] = orgs
 
     print("\n[Rapports HTML]")
