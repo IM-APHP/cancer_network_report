@@ -316,14 +316,13 @@ def _charger_oeci_long(dossier, conf_oeci, fictif):
                 if c.get("consommee", True) and "mesures" in c]
     lignes = []
     for annee, path in fichiers:
-        wb = openpyxl.load_workbook(path, data_only=True)  # cf. CLAUDE.md : pas de read_only
+        wb = _classeur_oeci(path)   # ouverture mémoïsée (cf. CLAUDE.md : pas de read_only)
         for nom, c in feuilles:
             if c["nom"] not in wb.sheetnames:
                 if c.get("obligatoire"):
                     print(f"  ⚠ OECI {annee} : feuille obligatoire « {c['nom']} » absente.")
                 continue
             lignes += _lire_feuille_oeci(wb[c["nom"]], c, c["source"], annee, masque)
-        wb.close()
     return lignes
 
 
@@ -693,6 +692,26 @@ def _alerter_derive(long, desc):
             print(f"  ⚠ Dérive entité niveau {n} (hors modalités attendues) : {sorted(inc)[:10]}")
 
 
+# ── Cache d'ouverture des classeurs OECI ─────────────────────────────────────────
+# Un même fichier OECI est ouvert par l'ingestion (_charger_oeci_long) PUIS par les
+# deux mappings hôpital→GHU : 3 chargements openpyxl complets par fichier. On mémoïse
+# l'ouverture par (chemin, mtime_ns, taille) — même invalidation que la mémoïsation
+# des vues de report_builder : régénérer le fichier change la clé et purge l'entrée.
+_CACHE_CLASSEURS: dict = {}
+
+
+def _classeur_oeci(path):
+    st = os.stat(path)
+    cle = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    wb = _CACHE_CLASSEURS.get(cle)
+    if wb is None:
+        for k in [k for k in _CACHE_CLASSEURS if k[0] == cle[0]]:
+            del _CACHE_CLASSEURS[k]         # purge les états périmés du même fichier
+        wb = openpyxl.load_workbook(path, data_only=True)
+        _CACHE_CLASSEURS[cle] = wb
+    return wb
+
+
 # ── Mapping hôpital → GHU (relocalisé ; utilisé par les pages inter-hôpitaux) ────
 def _fichiers_oeci_pub(dossier, fictif):
     desc = _charger_descriptif()
@@ -704,9 +723,9 @@ def mapping_hopital_ghu(dossier="data", fictif=False):
     union des millésimes. Cf. pages de comparaison inter-hôpitaux (survie)."""
     mapping = {}
     for _, path in _fichiers_oeci_pub(dossier, fictif):
-        wb = openpyxl.load_workbook(path, data_only=True)
+        wb = _classeur_oeci(path)               # ouverture mémoïsée (partagée avec l'ingestion)
         if "Survie globale" not in wb.sheetnames:
-            wb.close(); continue
+            continue
         ws = wb["Survie globale"]
         for r in range(5, ws.max_row + 1):
             agg, _ = _resoudre_niveau(ws.cell(r, 1).value, {"mode": "mots_cles"})
@@ -715,7 +734,6 @@ def mapping_hopital_ghu(dossier="data", fictif=False):
             hop, code = ws.cell(r, 5).value, _code_ghu(ws.cell(r, 4).value)
             if hop not in (None, "") and code:
                 mapping.setdefault(str(hop).strip(), code)
-        wb.close()
     return mapping
 
 
@@ -726,9 +744,9 @@ def mapping_hopital_ghu_delais(dossier="data", fictif=False):
     conf_niv = desc["sources"]["oeci"]["feuilles"]["delais_pec"]["niveau"]
     mapping = {}
     for _, path in _fichiers_oeci_pub(dossier, fictif):
-        wb = openpyxl.load_workbook(path, data_only=True)
+        wb = _classeur_oeci(path)               # ouverture mémoïsée (partagée avec l'ingestion)
         if "Délais PEC" not in wb.sheetnames:
-            wb.close(); continue
+            continue
         ws = wb["Délais PEC"]
         for r in range(3, ws.max_row + 1):
             agg, _ = _resoudre_niveau(ws.cell(r, 1).value, conf_niv)
@@ -737,5 +755,4 @@ def mapping_hopital_ghu_delais(dossier="data", fictif=False):
             hop, code = ws.cell(r, 3).value, _code_ghu(ws.cell(r, 2).value)
             if hop not in (None, "") and code:
                 mapping.setdefault(str(hop).strip(), code)
-        wb.close()
     return mapping
