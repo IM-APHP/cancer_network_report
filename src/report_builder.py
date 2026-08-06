@@ -572,6 +572,7 @@ def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
 _APPAREIL_MAP = {
     "OS-TISSUS MOUS":  "OS / TISSUS MOUS",
     "OEIL":            "ŒIL",
+    "?IL":             "ŒIL",   # mojibake RÉEL : « Œ » exporté en « ? » (0x3F) dans les xlsx canceroBR/canceroAPHP
     "Total Appareil":  "TOTAL",
 }
 
