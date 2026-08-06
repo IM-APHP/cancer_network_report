@@ -542,20 +542,27 @@ def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcule les lignes appareil=TOTAL manquantes en agrégeant organe=TOTAL."""
+    """Calcule les lignes appareil=TOTAL manquantes en agrégeant organe=TOTAL. Tolérant
+    aux tableaux SANS colonnes de comptes (délais seuls, cf. load_delais_hopitaux) : on
+    ne somme/moyenne que les colonnes présentes (comptes → somme, délais → moyenne)."""
     if "TOTAL" in df["appareil"].values:
         return df
-    num_cols = [
-        "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
-        "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
-    ]
+    num_cols = [c for c in ["nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+                            "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie",
+                            "nb_sejours_palliatifs"] if c in df.columns]
     delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
                                "delai_traitement_medical_median", "delai_radio_median"] if c in df.columns]
     org_total = df[df["organe"] == "TOTAL"]
-    agg = org_total.groupby(["entite", "annee"])[num_cols].sum().reset_index()
-    if delay_cols:
-        agg_d = org_total.groupby(["entite", "annee"])[delay_cols].mean().reset_index()
-        agg = agg.merge(agg_d, on=["entite", "annee"])
+    if org_total.empty or (not num_cols and not delay_cols):
+        return df                                # rien à agréger → df inchangé
+    agg = org_total[["entite", "annee"]].drop_duplicates()
+    if num_cols:                                 # comptes → somme
+        agg = agg.merge(org_total.groupby(["entite", "annee"])[num_cols].sum().reset_index(),
+                        on=["entite", "annee"])
+    if delay_cols:                               # délais → moyenne (NaN-safe)
+        agg = agg.merge(org_total.groupby(["entite", "annee"])[delay_cols].mean().reset_index(),
+                        on=["entite", "annee"])
+    agg = agg.copy()
     agg["appareil"] = "TOTAL"
     agg["organe"] = "TOTAL"
     return pd.concat([df, agg], ignore_index=True)
@@ -635,6 +642,15 @@ def load_regional(data_dir: Path) -> pd.DataFrame:
     df["entite"]   = df["entite"].replace(_ETAB_MAP)
     df["appareil"] = df["appareil"].replace(_APPAREIL_MAP)
     df["organe"]   = df["organe"].replace({"Total Organe": "TOTAL"})
+    # Reconstruction des grains organe=TOTAL / appareil=TOTAL manquants (idem load_aphp) :
+    # le régional est stocké au grain ORGANE, or l'accueil filtre appareil=="TOTAL" et les
+    # rapports par appareil filtrent organe=="TOTAL". Gardes NaN-safe : les helpers sautent
+    # tout (entite, annee, appareil) ayant déjà un organe=TOTAL, et n'ajoutent pas de
+    # appareil=TOTAL s'il existe déjà → en RÉEL (canceroBR/canceroAPHP fournissent ces grains)
+    # rien n'est recalculé (valeurs source et dédup AP-HP de canceroAPHP préservées) ; en
+    # FICTIF (grain organe seul) ils sont reconstruits par somme des comptes.
+    df = _add_organe_total(df)
+    df = _add_appareil_total(df)
     return df
 
 
@@ -672,7 +688,10 @@ def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
     """Délais médians niveau hôpital (+ AP-HP/GHU) pour la comparaison inter-hôpitaux.
     Le grain APPAREIL (organe=TOTAL) est ABSENT de la source (Total + Organe seulement)
     → reconstruit ici par ``_add_organe_total`` (moyenne des médianes par organe), comme
-    pour ``load_aphp``. Le grain global TOTAL/TOTAL vient déjà de la source (« Hop Total »)."""
+    pour ``load_aphp``. Le grain global appareil=TOTAL vient de la source « Hop Total » en
+    RÉEL (garde active → non recalculé) ; en FICTIF il est reconstruit par
+    ``_add_appareil_total`` (moyenne des délais par appareil) — sinon la comparaison
+    inter-hôpitaux au grain global serait vide."""
     long = _charger_long(data_dir)
     # Niveaux aphp/ghu (repères AP-HP/GHU des graphiques) + hopital (les barres). Les
     # délais aphp/ghu viennent de la tranche DIM APHP commune (identiques à load_aphp).
@@ -687,7 +706,8 @@ def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
     # délais (source « Délais PEC ») ne contiennent jamais de 0.
     delais = _COLS_DELAIS_HOP[4:]
     df[delais] = df[delais].replace(0, float("nan"))
-    df = _add_organe_total(df)   # grain appareil (organe=TOTAL) reconstruit (moyenne NaN-safe)
+    df = _add_organe_total(df)     # grain appareil (organe=TOTAL) reconstruit (moyenne NaN-safe)
+    df = _add_appareil_total(df)   # grain global (appareil=TOTAL) — reconstruit en fictif, gardé en réel
     return df
 
 
