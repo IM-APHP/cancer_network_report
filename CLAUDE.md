@@ -199,7 +199,9 @@ localement avant de pousser.
 - **Validation régionale réelle** : `chargeur_long` (dispositions `canceroBR` par établissement
   et `canceroAPHP` par portée) parse correctement la **structure** des fichiers d'exemple mais
   leurs **mesures sont vides** (gabarits) — la validation des **magnitudes** reste à faire sur des
-  extraits peuplés. À ce moment-là : vérifier via `_journaliser_delta_aphp` que l'AP-HP dédupliqué
+  extraits peuplés. Y inclure la **factorisation P4** (`_indices_colonnes` /
+  `_appliquer_mesures_bn` / `_emettre_lignes_bn`, communes BR/APHP) : équivalence prouvée sur
+  structurel + test synthétique peuplé, à **revalider sur extraits réels peuplés**. À ce moment-là : vérifier via `_journaliser_delta_aphp` que l'AP-HP dédupliqué
   (`canceroAPHP`) est **≤** l'ancienne somme `canceroBR` (l'écart = double-comptes supprimés) et
   que les comparateurs (Clinique/CH/CHU/PSPH/CLCC) sont **strictement inchangés**.
 - **`age`** (`pédiatrie`/`adultes`) : chantier différé — les onglets âge régionaux

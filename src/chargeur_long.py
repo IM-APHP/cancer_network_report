@@ -337,6 +337,48 @@ def _entite_regional(hopital_aphp, statut):
     return STATUT2TYPE.get(str(statut).strip())
 
 
+# ── Briques communes canceroBR / canceroAPHP (P4 — structure seule, comportement
+#    préservé ; À REVALIDER sur extraits réels peuplés dès qu'ils arrivent) ─────────
+def _indices_colonnes(colonnes, brut):
+    """Indices des colonnes valant ``brut`` OU ``brut.N`` (suffixe de déduplication
+    pandas des en-têtes répétés, ex. « Séjours avec chirurgie » sous « 0 jour » ET
+    « > 0 jour ») → toutes SOMMÉES par l'appelant."""
+    return [i for i, c in enumerate(colonnes)
+            if c == brut or re.fullmatch(re.escape(brut) + r"\.\d+", str(c))]
+
+
+def _appliquer_mesures_bn(df, cadre, masque):
+    """Applique les mesures régionales à ``cadre`` depuis les colonnes brutes de
+    ``df`` : séjours (MAP_BN_SEJOUR, colonnes répétées sommées) puis patients
+    (MAP_BN_PATIENT, première occurrence). Coercition FR (masqué → NaN)."""
+    for brut, var in MAP_BN_SEJOUR.items():
+        idxs = _indices_colonnes(df.columns, brut)
+        if idxs:
+            cadre[var] = sum(df.iloc[:, i].map(lambda v: _coercer_valeur(v, masque))
+                             for i in idxs)
+    for brut, (var, pop) in MAP_BN_PATIENT.items():
+        idxs = _indices_colonnes(df.columns, brut)
+        if idxs:
+            cadre[(var, pop)] = df.iloc[:, idxs[0]].map(lambda v: _coercer_valeur(v, masque))
+
+
+def _emettre_lignes_bn(agg, source):
+    """Émission longue commune depuis l'agrégat (annee, entite, appareil, organe) ;
+    colonnes mesures = ``var`` ou ``(var, population)``. ``niveau`` dérivé de
+    l'entité (``niveau_depuis_entite('AP-HP') == 'aphp'`` — identique au cas fixe
+    de l'ancien lecteur canceroAPHP)."""
+    mesure_cols = [c for c in agg.columns if c not in ("annee", "entite", "appareil", "organe")]
+    lignes = []
+    for _, row in agg.iterrows():
+        base = dict(annee=int(row["annee"]), source=source,
+                    niveau=niveau_depuis_entite(row["entite"]), entite=row["entite"],
+                    appareil=row["appareil"], organe=row["organe"], age="tous", stade=None)
+        for col in mesure_cols:
+            var, pop = col if isinstance(col, tuple) else (col, "tous")
+            lignes.append({**base, "population": pop, "variable": var, "valeur": row[col]})
+    return lignes
+
+
 def _lire_feuille_regional(path, conf, source, masque):
     """Feuille régionale « Total » → lignes longues. Multi-Finess agrégées par TYPE
     d'établissement (somme). « Séjours avec chirurgie » apparaît 2× → sommées."""
@@ -364,23 +406,8 @@ def _lire_feuille_regional(path, conf, source, masque):
 
     cadre = pd.DataFrame({"annee": annee, "entite": entite,
                           "appareil": app.values, "organe": org.values})
-    def _indices(brut):
-        # Colonnes valant ``brut`` OU ``brut.N`` (suffixe de déduplication pandas pour
-        # les en-têtes répétés, ex. « Séjours avec chirurgie » sous « 0 jour » ET
-        # « > 0 jour ») → toutes SOMMÉES.
-        return [i for i, c in enumerate(df.columns)
-                if c == brut or re.fullmatch(re.escape(brut) + r"\.\d+", str(c))]
-
     # Mesures (somme par ligne pour les colonnes en double, ex. chirurgie ×2).
-    for brut, var in MAP_BN_SEJOUR.items():
-        idxs = _indices(brut)
-        if idxs:
-            cadre[var] = sum(df.iloc[:, i].map(lambda v: _coercer_valeur(v, masque))
-                             for i in idxs)
-    for brut, (var, pop) in MAP_BN_PATIENT.items():
-        idxs = _indices(brut)
-        if idxs:
-            cadre[(var, pop)] = df.iloc[:, idxs[0]].map(lambda v: _coercer_valeur(v, masque))
+    _appliquer_mesures_bn(df, cadre, masque)
 
     cadre = cadre[cadre["entite"].notna() & cadre["annee"].notna()].copy()
     cadre["annee"] = cadre["annee"].round().astype(int)
@@ -388,20 +415,13 @@ def _lire_feuille_regional(path, conf, source, masque):
     # Agrégation par TYPE (somme) puis émission longue.
     mesure_cols = [c for c in cadre.columns if c not in ("annee", "entite", "appareil", "organe")]
     agg = cadre.groupby(["annee", "entite", "appareil", "organe"], as_index=False)[mesure_cols].sum()
-    lignes = []
-    for _, row in agg.iterrows():
-        base = dict(annee=int(row["annee"]), source=source,
-                    niveau=niveau_depuis_entite(row["entite"]), entite=row["entite"],
-                    appareil=row["appareil"], organe=row["organe"], age="tous", stade=None)
-        for col in mesure_cols:
-            var, pop = col if isinstance(col, tuple) else (col, "tous")
-            lignes.append({**base, "population": pop, "variable": var, "valeur": row[col]})
+    lignes = _emettre_lignes_bn(agg, source)
 
     # Diagnostic « AVANT » : somme canceroBR des hôpitaux AP-HP (nb_patients « tous »,
     # grain TOTAL/TOTAL, par année) — désormais EXCLUE du long (cf. _entite_regional),
     # mais conservée ici pour journaliser l'écart de dédoublonnage vs canceroAPHP.
     diag_aphp = {}
-    idx_pat = _indices("Nb de patients")
+    idx_pat = _indices_colonnes(df.columns, "Nb de patients")
     if idx_pat:
         est_aphp = (df.iloc[:, pos["hopital_aphp"]].astype(str).str.strip() == "Oui").to_numpy()
         sel = est_aphp & (gran.to_numpy() == "total")
@@ -480,22 +500,7 @@ def _lire_feuille_aphp(path, conf, source, masque, portee_retenue):
 
     cadre = pd.DataFrame({"annee": annee.values, "entite": "AP-HP",
                           "appareil": app.values, "organe": org.values})
-
-    def _indices(brut):
-        # Colonnes valant ``brut`` OU ``brut.N`` (dédup pandas des en-têtes répétés, ex.
-        # « Séjours avec chirurgie » 0 jour ET > 0 jour) → toutes SOMMÉES.
-        return [i for i, c in enumerate(df.columns)
-                if c == brut or re.fullmatch(re.escape(brut) + r"\.\d+", str(c))]
-
-    for brut, var in MAP_BN_SEJOUR.items():
-        idxs = _indices(brut)
-        if idxs:
-            cadre[var] = sum(df.iloc[:, i].map(lambda v: _coercer_valeur(v, masque))
-                             for i in idxs)
-    for brut, (var, pop) in MAP_BN_PATIENT.items():
-        idxs = _indices(brut)
-        if idxs:
-            cadre[(var, pop)] = df.iloc[:, idxs[0]].map(lambda v: _coercer_valeur(v, masque))
+    _appliquer_mesures_bn(df, cadre, masque)
 
     cadre = cadre[cadre["annee"].notna()].copy()
     cadre["annee"] = cadre["annee"].round().astype(int)
@@ -503,14 +508,8 @@ def _lire_feuille_aphp(path, conf, source, masque, portee_retenue):
     # Dédup défensif (déjà dédupliqué à la source : 1 ligne AP-HP par clé → somme = identité).
     mesure_cols = [c for c in cadre.columns if c not in ("annee", "entite", "appareil", "organe")]
     agg = cadre.groupby(["annee", "entite", "appareil", "organe"], as_index=False)[mesure_cols].sum()
-    lignes = []
-    for _, row in agg.iterrows():
-        base = dict(annee=int(row["annee"]), source=source, niveau="aphp", entite="AP-HP",
-                    appareil=row["appareil"], organe=row["organe"], age="tous", stade=None)
-        for col in mesure_cols:
-            var, pop = col if isinstance(col, tuple) else (col, "tous")
-            lignes.append({**base, "population": pop, "variable": var, "valeur": row[col]})
-    return lignes
+    # Émission commune : entite='AP-HP' partout → niveau_depuis_entite = 'aphp' (identique).
+    return _emettre_lignes_bn(agg, source)
 
 
 def _charger_aphp_long(dossier, conf_aphp, fictif):
