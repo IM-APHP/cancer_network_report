@@ -53,6 +53,9 @@ ne doit impacter QUE `chargeur_long.py` + `descriptif_sources.yaml`.
   (par feuille : en-têtes, position des dimensions, taxonomie `Niveau`, forme GHU, coercition,
   disposition des mesures, modalités attendues). Décrit le brut **uniquement** ; le mapping
   brut → `variable` reste **en code** dans `chargeur_long.py`.
+- **`guide_descriptif_sources.md`** — guide de **lecture/écriture** du YAML ci-dessus (modèle
+  mental : le YAML dit *où* sont les choses, le code décide *comment* les transformer ; quoi
+  modifier quand un format réel change vs quand la logique métier change).
 
 ## Format long — `data/donnees.csv`
 
@@ -123,6 +126,10 @@ sommées). Fichiers **absents tolérés** (avertit, ne plante pas). Schéma long
 | `src/report_builder.py` | `HTML_TEMPLATE` + helpers + `build_rapport_*`. Lit `donnees.csv` via `load_aphp` / `load_survival` / `load_regional` / `load_delais_hopitaux` (filtrent + pivotent le long). |
 | `run_reports.py` | Point d'entrée CLI. |
 | `notebooks/05_controle_preprod.ipynb` | **Garde-fou pré-prod** mode-agnostique : couverture (source × niveau × variable) + tests ✓/✗ critiques vs informatifs. À exécuter avant un build de prod. |
+| `notebooks/06_ingestion_reelle.ipynb` | **Poste de prod** (non bloquant) : inventaire des fichiers réels, inspection des formats bruts, ingestion + inspection du long produit. ⚠ Réécrit `donnees.csv` en mode réel. |
+| `notebooks/07_explorer_graphiques.ipynb` | **Exploration** : appelle directement les fonctions de `chart_utils`/`report_builder`, rendu Plotly natif (sans HTML). Paramètres `ENTITE`/`APPAREIL`/`ORGANE`/`MODE` en préambule. |
+| `notebooks/08_comprendre_les_fonctions.ipynb` | **Didactique** : décryptage des fonctions clés et des pièges du projet (paramètre par défaut de `donut_market_share`, alignement d'index pandas, `reconstruire_grains`) + fiche des pièges pandas récurrents. |
+| `tests/smoke_test.py` (+ `test_alignement_aphp.py`, `test_survie_instantane.py`) | **Filet de tests** (~15 s, hermétique), bloquant en CI avant le deploy. Cf. section Commandes. |
 
 ## Commandes
 
