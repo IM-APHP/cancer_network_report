@@ -544,17 +544,26 @@ def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
 def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule les lignes appareil=TOTAL manquantes en agrégeant organe=TOTAL. Tolérant
     aux tableaux SANS colonnes de comptes (délais seuls, cf. load_delais_hopitaux) : on
-    ne somme/moyenne que les colonnes présentes (comptes → somme, délais → moyenne)."""
-    if "TOTAL" in df["appareil"].values:
-        return df
+    ne somme/moyenne que les colonnes présentes (comptes → somme, délais → moyenne).
+    Garde par (entite, annee) — même sémantique que _add_organe_total : on ne reconstruit
+    QUE les couples n'ayant pas déjà leur appareil=TOTAL (cas mixte : une entité fournie
+    par la source, une autre à reconstruire)."""
     num_cols = [c for c in ["nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
                             "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie",
                             "nb_sejours_palliatifs"] if c in df.columns]
     delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
                                "delai_traitement_medical_median", "delai_radio_median"] if c in df.columns]
-    org_total = df[df["organe"] == "TOTAL"]
+    # Source d'agrégation : lignes organe=TOTAL hors grand total déjà présent.
+    org_total = df[(df["organe"] == "TOTAL") & (df["appareil"] != "TOTAL")]
     if org_total.empty or (not num_cols and not delay_cols):
         return df                                # rien à agréger → df inchangé
+    # Garde : couples (entite, annee) ayant DÉJÀ leur appareil=TOTAL (fourni par la source).
+    deja = df.loc[df["appareil"] == "TOTAL", ["entite", "annee"]].drop_duplicates()
+    if not deja.empty:
+        org_total = org_total.merge(deja.assign(_deja=1), on=["entite", "annee"], how="left")
+        org_total = org_total[org_total["_deja"].isna()].drop(columns="_deja")
+        if org_total.empty:
+            return df                            # tout est déjà fourni → df inchangé
     agg = org_total[["entite", "annee"]].drop_duplicates()
     if num_cols:                                 # comptes → somme
         agg = agg.merge(org_total.groupby(["entite", "annee"])[num_cols].sum().reset_index(),
