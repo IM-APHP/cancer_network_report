@@ -29,6 +29,13 @@ jobs:
       - name: Installation des dépendances
         run: pip install -r requirements.txt
 
+      # Garde-fou BLOQUANT : contrat de donnees.csv, grains TOTAL, figures/pages
+      # clés non vides (cf. tests/smoke_test.py). Un smoke rouge fait échouer ce
+      # job → le job deploy (needs: build) ne s'exécute pas : aucune page vide
+      # ne peut être publiée.
+      - name: Smoke test (garde-fou pré-build)
+        run: python tests/smoke_test.py
+
       - name: Génération des rapports HTML
         run: python run_reports.py
 
