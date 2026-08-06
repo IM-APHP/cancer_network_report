@@ -329,8 +329,12 @@ def _charger_oeci_long(dossier, conf_oeci, fictif):
 
 # ── Moteur régional (BN — multi-années, colonne Année) ──────────────────────────
 def _entite_regional(hopital_aphp, statut):
+    """canceroBR → type d'établissement comparateur. L'AP-HP (Hôpital AP-HP == 'Oui')
+    est DÉSORMAIS fournie par canceroAPHP (dédupliquée) : on l'EXCLUT ici (retour None,
+    la somme des hôpitaux AP-HP double-comptait les patients multi-hôpitaux). canceroBR
+    ne produit donc plus que les comparateurs (Clinique/CH/CHU/PSPH/CLCC)."""
     if str(hopital_aphp).strip() == "Oui":
-        return "AP-HP"
+        return None
     return STATUT2TYPE.get(str(statut).strip())
 
 
@@ -393,7 +397,22 @@ def _lire_feuille_regional(path, conf, source, masque):
         for col in mesure_cols:
             var, pop = col if isinstance(col, tuple) else (col, "tous")
             lignes.append({**base, "population": pop, "variable": var, "valeur": row[col]})
-    return lignes
+
+    # Diagnostic « AVANT » : somme canceroBR des hôpitaux AP-HP (nb_patients « tous »,
+    # grain TOTAL/TOTAL, par année) — désormais EXCLUE du long (cf. _entite_regional),
+    # mais conservée ici pour journaliser l'écart de dédoublonnage vs canceroAPHP.
+    diag_aphp = {}
+    idx_pat = _indices("Nb de patients")
+    if idx_pat:
+        est_aphp = (df.iloc[:, pos["hopital_aphp"]].astype(str).str.strip() == "Oui").to_numpy()
+        sel = est_aphp & (gran.to_numpy() == "total")
+        if sel.any():
+            an = pd.to_numeric(df.iloc[:, pos["annee"]], errors="coerce").to_numpy()
+            pat = df.iloc[:, idx_pat[0]].map(lambda v: _coercer_valeur(v, masque)).to_numpy()
+            t = pd.DataFrame({"annee": an[sel], "pat": pat[sel]}).dropna(subset=["annee"])
+            if not t.empty:
+                diag_aphp = t.groupby(t["annee"].round().astype(int))["pat"].sum().to_dict()
+    return lignes, diag_aphp
 
 
 def _trouver_regional(dossier, motif, fictif):
@@ -406,13 +425,113 @@ def _trouver_regional(dossier, motif, fictif):
 
 
 def _charger_regional_long(dossier, conf_reg, fictif):
+    """canceroBR → lignes longues (comparateurs uniquement, AP-HP exclue). Renvoie aussi
+    ``diag_aphp`` = {année → somme BR des hôpitaux AP-HP} (nb_patients, grain TOTAL) pour
+    journaliser l'écart de dédoublonnage vs canceroAPHP."""
     masque = set(conf_reg.get("coercition", {}).get("masque", []))
     source = conf_reg["source"]
-    lignes = []
+    lignes, diag_aphp = [], {}
     for nom, c in conf_reg["feuilles"].items():
         motif = conf_reg["fichiers"][c["fichier"]]
         path = _trouver_regional(dossier, motif, fictif)
-        lignes += _lire_feuille_regional(path, c, source, masque)
+        lg, diag = _lire_feuille_regional(path, c, source, masque)
+        lignes += lg
+        for an, v in diag.items():
+            diag_aphp[an] = diag_aphp.get(an, 0.0) + v
+    return lignes, diag_aphp
+
+
+# ── Moteur canceroAPHP (AP-HP régional dédupliqué — BN, multi-années) ────────────
+def _portee_granularite(niveau_val):
+    """Niveau canceroAPHP « portée - granularité » → (portée, granularité) normalisés
+    (TOUS les espaces retirés). rsplit sur le DERNIER '-' : la portée 'AP-HP' conserve
+    son tiret interne. Robuste à 'AP-HP-Total' / 'AP-HP - Total' / 'AP-HP- Total'."""
+    s = str(niveau_val or "").replace(" ", "").replace(" ", "")
+    if "-" not in s:
+        return s, ""
+    portee, gran = s.rsplit("-", 1)
+    return portee, gran
+
+
+def _lire_feuille_aphp(path, conf, source, masque, portee_retenue):
+    """Feuille canceroAPHP « Total » → lignes longues pour l'entité AP-HP dédupliquée.
+    Ne retient que la PORTÉE AP-HP (GH/GHU/Hop ignorés) ; granularité → sentinelles.
+    Mesures identiques au régional (MAP_BN_*, chirurgie 0j/>0j SOMMÉES ; coercition FR)."""
+    dims = conf["dimensions"]
+    header = conf["lignes_entete"] - 1                       # pandas : 0-based
+    df = pd.read_excel(path, sheet_name=conf["nom"], header=header)
+    df.columns = [str(c).strip() for c in df.columns]
+    pos = {k: v - 1 for k, v in dims.items()}
+    grans = conf["granularites"]                             # {normalisée → total/appareil/organe}
+
+    pg = df.iloc[:, pos["niveau"]].map(_portee_granularite)
+    portee = pg.map(lambda t: t[0])
+    gran_brut = pg.map(lambda t: t[1])
+    keep = (portee == portee_retenue) & gran_brut.isin(list(grans))
+    df = df[keep].copy()
+    if df.empty:
+        return []
+    gran = gran_brut[keep].map(grans)                        # → total / appareil / organe
+
+    appareil = df.iloc[:, pos["appareil"]].astype(object)
+    organe = df.iloc[:, pos["organe"]].astype(object)
+    annee = pd.to_numeric(df.iloc[:, pos["annee"]], errors="coerce")
+    app = appareil.where(gran != "total", SENTINELLE)        # total → appareil=TOTAL
+    org = organe.where(gran == "organe", SENTINELLE)         # total/appareil → organe=TOTAL
+
+    cadre = pd.DataFrame({"annee": annee.values, "entite": "AP-HP",
+                          "appareil": app.values, "organe": org.values})
+
+    def _indices(brut):
+        # Colonnes valant ``brut`` OU ``brut.N`` (dédup pandas des en-têtes répétés, ex.
+        # « Séjours avec chirurgie » 0 jour ET > 0 jour) → toutes SOMMÉES.
+        return [i for i, c in enumerate(df.columns)
+                if c == brut or re.fullmatch(re.escape(brut) + r"\.\d+", str(c))]
+
+    for brut, var in MAP_BN_SEJOUR.items():
+        idxs = _indices(brut)
+        if idxs:
+            cadre[var] = sum(df.iloc[:, i].map(lambda v: _coercer_valeur(v, masque))
+                             for i in idxs)
+    for brut, (var, pop) in MAP_BN_PATIENT.items():
+        idxs = _indices(brut)
+        if idxs:
+            cadre[(var, pop)] = df.iloc[:, idxs[0]].map(lambda v: _coercer_valeur(v, masque))
+
+    cadre = cadre[cadre["annee"].notna()].copy()
+    cadre["annee"] = cadre["annee"].round().astype(int)
+
+    # Dédup défensif (déjà dédupliqué à la source : 1 ligne AP-HP par clé → somme = identité).
+    mesure_cols = [c for c in cadre.columns if c not in ("annee", "entite", "appareil", "organe")]
+    agg = cadre.groupby(["annee", "entite", "appareil", "organe"], as_index=False)[mesure_cols].sum()
+    lignes = []
+    for _, row in agg.iterrows():
+        base = dict(annee=int(row["annee"]), source=source, niveau="aphp", entite="AP-HP",
+                    appareil=row["appareil"], organe=row["organe"], age="tous", stade=None)
+        for col in mesure_cols:
+            var, pop = col if isinstance(col, tuple) else (col, "tous")
+            lignes.append({**base, "population": pop, "variable": var, "valeur": row[col]})
+    return lignes
+
+
+def _charger_aphp_long(dossier, conf_aphp, fictif):
+    """canceroAPHP → lignes longues de l'entité « AP-HP » (niveau aphp, source BN).
+    Fichiers ABSENTS → tolérés (avertit, ne plante pas) : utile en test/gabarit vide."""
+    if not conf_aphp:
+        return []
+    masque = set(conf_aphp.get("coercition", {}).get("masque", []))
+    source = conf_aphp["source"]
+    portee = conf_aphp.get("portee_retenue", "AP-HP")
+    lignes = []
+    for nom, c in conf_aphp["feuilles"].items():
+        motif = conf_aphp["fichiers"][c["fichier"]]
+        try:
+            path = _trouver_regional(dossier, motif, fictif)
+        except FileNotFoundError as e:
+            print(f"  ⚠ canceroAPHP absent ({motif}) : entité AP-HP régionale non fournie "
+                  f"par canceroAPHP. [{e}]")
+            continue
+        lignes += _lire_feuille_aphp(path, c, source, masque, portee)
     return lignes
 
 
@@ -510,7 +629,11 @@ def charger_long(dossier="data", fictif=False):
     desc = _charger_descriptif()
     src = desc["sources"]
     lignes = _charger_oeci_long(dossier, src["oeci"], fictif)
-    lignes += _charger_regional_long(dossier, src["regional"], fictif)
+    lignes_reg, diag_br_aphp = _charger_regional_long(dossier, src["regional"], fictif)
+    lignes += lignes_reg
+    # AP-HP régional dédupliqué (canceroAPHP) — remplace la somme des hôpitaux AP-HP de
+    # canceroBR (exclue par _entite_regional). Absent → toléré (avertit, ne plante pas).
+    lignes += _charger_aphp_long(dossier, src.get("regional_aphp"), fictif)
 
     long = pd.DataFrame(lignes, columns=LONG_COLS)
     # Pas de bourrage NaN : on n'émet pas les valeurs absentes/masquées.
@@ -524,7 +647,33 @@ def charger_long(dossier="data", fictif=False):
     # Dédup défensif (clé d'unicité du contrat) ; on garde la 1re occurrence.
     long = long.drop_duplicates(subset=[c for c in LONG_COLS if c != "valeur"])
     _alerter_derive(long, desc)
+    _journaliser_delta_aphp(long, diag_br_aphp)
     return long[LONG_COLS].reset_index(drop=True)
+
+
+def _journaliser_delta_aphp(long, diag_br_aphp):
+    """Journalise l'écart nb_patients AP-HP AVANT (somme canceroBR des hôpitaux AP-HP)
+    vs APRÈS (canceroAPHP dédupliqué), grain TOTAL/TOTAL, par année. L'écart = les
+    double-comptes supprimés (le nouveau doit être ≤ l'ancien). Best-effort."""
+    if not diag_br_aphp:
+        return
+    new = long[(long["source"] == "BN") & (long["niveau"] == "aphp")
+               & (long["appareil"] == SENTINELLE) & (long["organe"] == SENTINELLE)
+               & (long["variable"] == "nb_patients") & (long["population"] == "tous")]
+    new_par_an = {int(a): float(pd.to_numeric(g["valeur"], errors="coerce").sum())
+                  for a, g in new.groupby("annee")}
+    annees = [a for a in sorted(set(diag_br_aphp) | set(new_par_an))
+              if ANNEE_MIN <= a <= ANNEE_MAX]
+    if not annees:
+        return
+    print("  ℹ AP-HP régional dédupliqué — nb_patients (canceroAPHP vs somme canceroBR) :")
+    for an in annees:
+        av, ap = diag_br_aphp.get(an), new_par_an.get(an)
+        if av is None or ap is None:
+            print(f"      {an} : avant(BR)={av}  après(APHP)={ap}  (comparaison partielle)")
+            continue
+        print(f"      {an} : avant(BR)={av:,.0f}  après(APHP)={ap:,.0f}  "
+              f"écart(double-comptes)={av - ap:,.0f}")
 
 
 def _alerter_derive(long, desc):
