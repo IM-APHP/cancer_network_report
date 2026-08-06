@@ -141,6 +141,12 @@ python run_reports.py --no-data --appareil "APPAREIL DIGESTIF" --organe "Colon-R
 (`jupyter nbconvert --execute`) — tous les tests **critiques** doivent être verts.
 Valider une modif = build ciblé (`--no-data --appareil ...`) puis ouverture du HTML dans `output/`.
 
+**Smoke test (avant tout push)** : `python tests/smoke_test.py` (~15 s, hermétique —
+données fictives en dossier temporaire, ne touche ni `data/` ni `output/`). Vérifie le
+contrat de `donnees.csv`, la présence des grains `TOTAL` après les `load_*`, et que les
+figures/pages clés (contexte régional, délais inter-hôpitaux…) ne sont **pas vides** —
+le pattern de régression le plus fréquent du dépôt.
+
 ## Correspondances (dans `referentiels.py`)
 
 GHU (libellé réel OECI → code interne) : Centre-Université de Paris → GHU Centre ·
