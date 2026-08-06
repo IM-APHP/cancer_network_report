@@ -617,12 +617,48 @@ _COLS_DELAIS_HOP = ["annee", "entite", "appareil", "organe",
                     "delai_traitement_medical_median", "delai_radio_median"]
 
 
+# ── Mémoïsation des chargements ────────────────────────────────────────────────
+# Un build complet relisait donnees.csv (~18 Mo) ~25 fois : build_rapport_ghu /
+# build_rapport_global rechargent leurs vues à chaque appel. Le fichier ne changeant
+# pas pendant un build, on mémoïse par (chemin résolu, mtime_ns, taille) — toute
+# régénération de donnees.csv (notebooks 05/06, --data-only) change la clé et purge.
+_CACHE_LONG: dict = {}     # {(chemin, mtime_ns, taille): DataFrame long partagé}
+_CACHE_VUES: dict = {}     # {(nom_vue, chemin, mtime_ns, taille): DataFrame large}
+
+
+def _cle_fichier(data_dir: Path) -> tuple:
+    p = (Path(data_dir) / "donnees.csv").resolve()
+    st = p.stat()
+    return (str(p), st.st_mtime_ns, st.st_size)
+
+
 def _charger_long(data_dir: Path) -> pd.DataFrame:
     """Lit le fichier pivot long unique ``donnees.csv``. ``dtype`` forcé sur ``stade``
-    (majoritairement vide hors survie) pour éviter le DtypeWarning de pandas."""
-    df = pd.read_csv(data_dir / "donnees.csv", dtype={"stade": "string"})
-    return df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")],
-                   errors="ignore")
+    (majoritairement vide hors survie) pour éviter le DtypeWarning de pandas.
+    MÉMOÏSÉ : le DataFrame retourné est PARTAGÉ, en lecture seule par convention —
+    les pivots (``pivoter_simple``/``pivoter_survie``) copient avant modification."""
+    cle = _cle_fichier(data_dir)
+    df = _CACHE_LONG.get(cle)
+    if df is None:
+        _CACHE_LONG.clear()
+        _CACHE_VUES.clear()          # nouveau fichier → purge des vues dérivées
+        df = pd.read_csv(data_dir / "donnees.csv", dtype={"stade": "string"})
+        df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")],
+                     errors="ignore")
+        _CACHE_LONG[cle] = df
+    return df
+
+
+def _vue_memoisee(nom: str, data_dir: Path, construire) -> pd.DataFrame:
+    """Mémoïse une vue large ``load_*`` par état du fichier. Retourne une COPIE
+    défensive : les consommateurs peuvent modifier leur exemplaire sans corrompre
+    le cache (ils partagent déjà les frames préchargées dans run_reports)."""
+    cle = (nom, *_cle_fichier(data_dir))
+    df = _CACHE_VUES.get(cle)
+    if df is None:
+        df = construire()
+        _CACHE_VUES[cle] = df
+    return df.copy()
 
 
 def _reindex_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
@@ -635,6 +671,10 @@ def _reindex_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
 
 
 def load_aphp(data_dir: Path) -> pd.DataFrame:
+    return _vue_memoisee("aphp", data_dir, lambda: _construire_aphp(data_dir))
+
+
+def _construire_aphp(data_dir: Path) -> pd.DataFrame:
     long = _charger_long(data_dir)
     df = pivoter_simple(long, "DIM APHP", ["aphp", "ghu"])
     df = _reindex_cols(df, _COLS_APHP)
@@ -644,6 +684,10 @@ def load_aphp(data_dir: Path) -> pd.DataFrame:
 
 
 def load_regional(data_dir: Path) -> pd.DataFrame:
+    return _vue_memoisee("regional", data_dir, lambda: _construire_regional(data_dir))
+
+
+def _construire_regional(data_dir: Path) -> pd.DataFrame:
     long = _charger_long(data_dir)
     df = pivoter_simple(long, "BN", ["aphp", "type_etab"])
     df = _reindex_cols(df, _COLS_REGIONAL)
@@ -689,12 +733,21 @@ def regional_disponible(reg: pd.DataFrame) -> bool:
 
 
 def load_survival(data_dir: Path) -> pd.DataFrame:
+    return _vue_memoisee("survie", data_dir, lambda: _construire_survival(data_dir))
+
+
+def _construire_survival(data_dir: Path) -> pd.DataFrame:
     long = _charger_long(data_dir)
     df = pivoter_survie(long, source="EDS APHP")
     return _reindex_cols(df, _COLS_SURVIE)
 
 
 def load_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
+    return _vue_memoisee("delais_hop", data_dir,
+                         lambda: _construire_delais_hopitaux(data_dir))
+
+
+def _construire_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
     """Délais médians niveau hôpital (+ AP-HP/GHU) pour la comparaison inter-hôpitaux.
     Le grain APPAREIL (organe=TOTAL) est ABSENT de la source (Total + Organe seulement)
     → reconstruit ici par ``_add_organe_total`` (moyenne des médianes par organe), comme
