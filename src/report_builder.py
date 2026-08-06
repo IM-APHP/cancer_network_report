@@ -514,6 +514,17 @@ def organe_counts_table(aphp_df: pd.DataFrame, entity: str, appareil: str,
 
 # ── Loaders ────────────────────────────────────────────────────────────────────
 
+def reconstruire_grains(df: pd.DataFrame) -> pd.DataFrame:
+    """Point d'entrée UNIQUE de reconstruction des grains TOTAL d'une vue large :
+    organe=TOTAL par (entite, annee, appareil) PUIS appareil=TOTAL par (entite, annee).
+    Comptes → somme, délais → moyenne NaN-safe. Garde « reconstruire seulement si
+    absent » PAR GROUPE : les grains fournis par la source (dont l'AP-HP régional
+    dédupliqué canceroAPHP, OECI « Hop Total »…) ne sont JAMAIS recalculés.
+    Consommé par load_aphp / load_regional / load_delais_hopitaux — un load_* ne peut
+    plus « oublier » un grain en n'appelant qu'un helper sur deux."""
+    return _add_appareil_total(_add_organe_total(df))
+
+
 def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule les lignes organe=TOTAL manquantes par (entite, annee, appareil) —
     vectorisé (anti-jointure sur les groupes déjà pourvus + groupby agrégé, comptes →
@@ -683,8 +694,7 @@ def _construire_aphp(data_dir: Path) -> pd.DataFrame:
     long = _charger_long(data_dir)
     df = pivoter_simple(long, "DIM APHP", ["aphp", "ghu"])
     df = _reindex_cols(df, _COLS_APHP)
-    df = _add_organe_total(df)
-    df = _add_appareil_total(df)
+    df = reconstruire_grains(df)
     return df
 
 
@@ -708,8 +718,7 @@ def _construire_regional(data_dir: Path) -> pd.DataFrame:
     # appareil=TOTAL s'il existe déjà → en RÉEL (canceroBR/canceroAPHP fournissent ces grains)
     # rien n'est recalculé (valeurs source et dédup AP-HP de canceroAPHP préservées) ; en
     # FICTIF (grain organe seul) ils sont reconstruits par somme des comptes.
-    df = _add_organe_total(df)
-    df = _add_appareil_total(df)
+    df = reconstruire_grains(df)
     return df
 
 
@@ -774,8 +783,7 @@ def _construire_delais_hopitaux(data_dir: Path) -> pd.DataFrame:
     # délais (source « Délais PEC ») ne contiennent jamais de 0.
     delais = _COLS_DELAIS_HOP[4:]
     df[delais] = df[delais].replace(0, float("nan"))
-    df = _add_organe_total(df)     # grain appareil (organe=TOTAL) reconstruit (moyenne NaN-safe)
-    df = _add_appareil_total(df)   # grain global (appareil=TOTAL) — reconstruit en fictif, gardé en réel
+    df = reconstruire_grains(df)   # grains appareil + global (reconstruits en fictif, gardés en réel)
     return df
 
 
