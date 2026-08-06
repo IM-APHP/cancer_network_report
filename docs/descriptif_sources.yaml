@@ -242,3 +242,72 @@ sources:
 
     modalites_attendues:
       type_etab: [Clinique, CH, CHU, PSPH, CLCC]
+
+  # ══════════════ RÉGIONAL AP-HP dédupliqué — canceroAPHP (BN) ══════════════
+  # Fournit désormais l'entité « AP-HP » du régional (déjà dédupliquée à la source),
+  # en REMPLACEMENT de la somme des hôpitaux AP-HP de canceroBR (qui double-comptait
+  # les patients passés par plusieurs hôpitaux). canceroBR ne fournit plus que les
+  # comparateurs (Clinique/CH/CHU/PSPH/CLCC). Schéma long INCHANGÉ : source BN, niveau
+  # aphp, entité « AP-HP », variables nb_patients / nb_sejours_*.
+  regional_aphp:
+    source: "BN"
+    fichiers:
+      patients: "canceroAPHP_*_Pat_*.xlsx"
+      sejours:  "canceroAPHP_*_Sej_*.xlsx"   # NB fichier de test : « ..._Sej_..._.xlsx » (point final) — couvert par *_Sej_*.xlsx
+    coercition:
+      milliers: [" ", " "]
+      decimale: ","
+      pourcent: "%"
+      masque:  ["ns", "< 5", "-", "n.d.", "nd"]
+
+    # L'ÂGE est porté par les ONGLETS (comme canceroBR) : on ne lit que 'Total' → age=tous.
+    onglet_lu: "Total"
+    onglets_age_differes: ["Age < 18 ans", "Age >= 18 ans"]
+
+    # La colonne « Niveau » est en « PORTÉE - GRANULARITÉ » (ex. 'AP-HP - Organe',
+    # 'GHU - Total', 'Hop - Appareil'). Le CODE (_portee_granularite) normalise en
+    # retirant TOUS les espaces puis rsplit('-', 1) → (portée, granularité) : robuste
+    # aux variantes 'AP-HP-Total' / 'AP-HP - Total' / 'AP-HP- Total'. SEULE la portée
+    # AP-HP est retenue ; GH/GHU/Hop sont IGNORÉS (ils font double emploi avec l'OECI).
+    portee_retenue: "AP-HP"
+
+    feuilles:
+
+      total_patients:
+        fichier: patients
+        nom: "Total"
+        lignes_entete: 1
+        premiere_ligne_donnees: 2
+        # Dimensions PAR POSITION (entite en col.2 = 'Hopital - GH', ignorée : la portée
+        # AP-HP force entité='AP-HP').
+        dimensions: { niveau: 1, entite: 2, appareil: 3, organe: 4, annee: 5 }
+        granularites:                          # granularité normalisée → sentinelles
+          "Total":    total                    # appareil + organe → TOTAL
+          "Appareil": appareil                 # organe → TOTAL
+          "Organe":   organe
+        mesures:
+          disposition: simple
+          colonnes_utiles:                     # mêmes libellés que canceroBR
+            - "Nb de patients"     # → nb_patients,  population=tous
+            - "Nouveaux patients"  # → nb_patients,  population=nouveaux
+
+      total_sejours:
+        fichier: sejours
+        nom: "Total"
+        lignes_entete: 2                       # L1 = blocs « 0 jour / >0 jour », L2 = colonnes
+        premiere_ligne_donnees: 3
+        dimensions: { niveau: 1, entite: 2, appareil: 3, organe: 4, annee: 5 }
+        granularites:
+          "Total":    total
+          "Appareil": appareil
+          "Organe":   organe
+        mesures:
+          disposition: simple
+          colonnes_utiles:
+            - "Séjours avec chirurgie"     # apparaît 2× (0 jour + >0 jour) → SOMMÉES → nb_sejours_chirurgie
+            - "Séjours avec chimio"        # → nb_sejours_chimiotherapie
+            - "Séjours avec radiothérapie" # → nb_sejours_radiotherapie
+            - "Nb de séjours palliatifs"   # → nb_sejours_palliatifs
+
+    modalites_attendues:
+      portee: [AP-HP]                          # seule portée retenue (GH/GHU/Hop ignorés)
