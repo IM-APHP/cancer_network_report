@@ -17,7 +17,7 @@ import sys
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
-from chargeur_long import charger_long   # noqa: E402
+from chargeur_long import charger_long, _fichiers_oeci_pub   # noqa: E402
 
 # Mesures régionales : sert à détecter un extrait canceroBR encore VIDE.
 _MESURES_REGIONAL = ["nb_patients", "nb_sejours_chirurgie", "nb_sejours_chimiotherapie",
@@ -43,6 +43,17 @@ def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
     if not bn.empty and float(pd.to_numeric(bn["valeur"], errors="coerce").fillna(0).sum()) == 0:
         print("  ⚠ Régional : mesures entièrement nulles (extrait canceroBR non rempli) "
               "→ sections « Contexte régional » MASQUÉES dans les rapports.")
+
+    # Alerte symétrique OECI : contrairement au régional (dont les vides deviennent des
+    # 0, donc des lignes présentes), les mesures OECI vides deviennent NaN et sont
+    # ÉCARTÉES → aucune ligne DIM APHP/EDS APHP dans le long. On détecte donc « fichier
+    # OECI présent mais sources OECI absentes/nulles » : sans ces lignes, tout le socle
+    # AP-HP/GHU/hôpital (patients, séjours, survie, délais) est vide silencieusement.
+    if _fichiers_oeci_pub(dossier_source, fictif):
+        oeci = long[long["source"].isin(["DIM APHP", "EDS APHP"])]
+        if oeci.empty or float(pd.to_numeric(oeci["valeur"], errors="coerce").fillna(0).sum()) == 0:
+            print("  ⚠ OECI : mesures entièrement nulles (fichier indicateurs_oeci non rempli) "
+                  "→ aucune donnée AP-HP/GHU/hôpital (patients, séjours, survie, délais).")
 
     out = os.path.join(dossier_data, "donnees.csv")
     long.to_csv(out, index=False, encoding="utf-8")
