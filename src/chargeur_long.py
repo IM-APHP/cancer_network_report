@@ -435,12 +435,24 @@ def _lire_feuille_regional(path, conf, source, masque):
 
 
 def _trouver_regional(dossier, motif, fictif):
+    """Résout le fichier régional d'un motif. JOURNALISE le fichier lu (diagnostic
+    prod) et AVERTIT bruyamment si plusieurs fichiers matchent : l'ordre alphabétique
+    (dates DDMMYYYY, suffixes…) peut silencieusement sélectionner un ANCIEN gabarit
+    vide à la place du nouvel extrait peuplé → ne garder qu'UN fichier par motif."""
     cands = glob.glob(os.path.join(dossier, motif))
     cands = [p for p in cands if (p.endswith("_fictif.xlsx") == fictif)]
     if not cands:
         mode = "fictif" if fictif else "réel"
         raise FileNotFoundError(f"Aucun fichier régional ({mode}) : {motif}")
-    return sorted(cands)[0]
+    choisi = sorted(cands)[0]
+    if len(cands) > 1:
+        autres = [os.path.basename(p) for p in sorted(cands)[1:]]
+        print(f"  ⚠ {len(cands)} fichiers matchent {motif} — LU : "
+              f"{os.path.basename(choisi)} ; IGNORÉS : {autres}. Si le fichier lu est "
+              f"un ancien gabarit vide, SUPPRIMER les doublons de data/.")
+    else:
+        print(f"  · fichier régional lu : {os.path.basename(choisi)}")
+    return choisi
 
 
 def _charger_regional_long(dossier, conf_reg, fictif):

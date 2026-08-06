@@ -44,6 +44,20 @@ def exporter_csv(dossier_data="data", fictif=True, dossier_source=None):
         print("  ⚠ Régional : mesures entièrement nulles (extrait canceroBR non rempli) "
               "→ sections « Contexte régional » MASQUÉES dans les rapports.")
 
+    # Alerte ciblée « cas mixte » : comparateurs peuplés MAIS entité AP-HP régionale
+    # entièrement nulle → symptôme d'un canceroAPHP vide/périmé (ex. ancien gabarit
+    # sélectionné parmi plusieurs fichiers matchant le motif) ou absent. L'alerte
+    # globale ci-dessus ne se déclenche pas dans ce cas (la somme BN est > 0).
+    bn_ap = bn[bn["niveau"] == "aphp"]
+    bn_comp = bn[bn["niveau"] == "type_etab"]
+    if (not bn_comp.empty
+            and float(pd.to_numeric(bn_comp["valeur"], errors="coerce").fillna(0).sum()) > 0
+            and (bn_ap.empty
+                 or float(pd.to_numeric(bn_ap["valeur"], errors="coerce").fillna(0).sum()) == 0)):
+        print("  ⚠ Régional : comparateurs PEUPLÉS mais entité AP-HP entièrement NULLE "
+              "→ vérifier le fichier canceroAPHP lu (cf. « fichier régional lu » ci-dessus : "
+              "gabarit vide ? doublon périmé ? fichier absent ?).")
+
     # Alerte symétrique OECI : contrairement au régional (dont les vides deviennent des
     # 0, donc des lignes présentes), les mesures OECI vides deviennent NaN et sont
     # ÉCARTÉES → aucune ligne DIM APHP/EDS APHP dans le long. On détecte donc « fichier
