@@ -515,30 +515,35 @@ def organe_counts_table(aphp_df: pd.DataFrame, entity: str, appareil: str,
 # ── Loaders ────────────────────────────────────────────────────────────────────
 
 def _add_organe_total(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcule les lignes organe=TOTAL manquantes par (entite, annee, appareil)."""
-    num_cols = [
-        "nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
-        "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie", "nb_sejours_palliatifs",
-    ]
+    """Calcule les lignes organe=TOTAL manquantes par (entite, annee, appareil) —
+    vectorisé (anti-jointure sur les groupes déjà pourvus + groupby agrégé, comptes →
+    somme, délais → moyenne NaN-safe). Ordre des lignes ajoutées = tri groupby,
+    identique à l'ancienne boucle par groupe."""
+    num_cols = [c for c in ["nb_patients", "nb_nouveaux_patients", "nb_sejours_chirurgie",
+                            "nb_sejours_chimiotherapie", "nb_sejours_radiotherapie",
+                            "nb_sejours_palliatifs"] if c in df.columns]
     delay_cols = [c for c in ["delai_global_median", "delai_chirurgie_median",
                                "delai_traitement_medical_median", "delai_radio_median"] if c in df.columns]
-    rows_to_add = []
-    for (entite, annee, appareil), grp in df[df["appareil"] != "TOTAL"].groupby(
-        ["entite", "annee", "appareil"]
-    ):
-        if "TOTAL" in grp["organe"].values:
-            continue  # déjà présent
-        row = {"entite": entite, "annee": annee, "appareil": appareil, "organe": "TOTAL"}
-        for c in num_cols:
-            if c in grp.columns:
-                row[c] = grp[c].sum()
-        for c in delay_cols:
-            if c in grp.columns:
-                row[c] = grp[c].mean()
-        rows_to_add.append(row)
-    if rows_to_add:
-        df = pd.concat([df, pd.DataFrame(rows_to_add)], ignore_index=True)
-    return df
+    cles = ["entite", "annee", "appareil"]
+    src = df[df["appareil"] != "TOTAL"]
+    if src.empty or (not num_cols and not delay_cols):
+        return df
+    # Anti-jointure : groupes ayant DÉJÀ leur organe=TOTAL (fourni par la source).
+    deja = src.loc[src["organe"] == "TOTAL", cles].drop_duplicates()
+    if not deja.empty:
+        src = src.merge(deja.assign(_deja=1), on=cles, how="left")
+        src = src[src["_deja"].isna()].drop(columns="_deja")
+        if src.empty:
+            return df
+    # Agrégation par groupe (ordre trié du groupby, comme l'ancienne boucle).
+    if num_cols:
+        agg = src.groupby(cles)[num_cols].sum().reset_index()
+        if delay_cols:
+            agg = agg.merge(src.groupby(cles)[delay_cols].mean().reset_index(), on=cles)
+    else:
+        agg = src.groupby(cles)[delay_cols].mean().reset_index()
+    agg["organe"] = "TOTAL"
+    return pd.concat([df, agg], ignore_index=True)
 
 
 def _add_appareil_total(df: pd.DataFrame) -> pd.DataFrame:
