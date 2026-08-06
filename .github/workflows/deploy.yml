@@ -37,6 +37,7 @@ jobs:
         run: |
           python tests/smoke_test.py
           python tests/test_alignement_aphp.py
+          python tests/test_survie_instantane.py
 
       - name: Génération des rapports HTML
         run: python run_reports.py

@@ -614,8 +614,15 @@ def survival_by_stage(
         & (df_surv["population"] == population)
     ].copy()
 
-    if year is None and not d.empty:
-        year = int(d["annee"].max())
+    # Instantané sur la dernière année AVEC survie : la survie (5 ans de recul) est en
+    # retard sur les comptes — l'année demandée (souvent last_year du dataset) peut ne
+    # pas en avoir. Si d'autres années en ont, on retombe sur la dernière DISPONIBLE
+    # (le titre affiche l'année réellement tracée). « Pas de données » seulement si
+    # AUCUNE survie n'existe pour cette entité/appareil/organe.
+    if not d.empty:
+        annees_dispo = set(d["annee"])
+        if year is None or year not in annees_dispo:
+            year = int(d["annee"].max())
     d = d[d["annee"] == year]
 
     if d.empty:

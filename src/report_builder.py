@@ -1036,7 +1036,7 @@ def build_rapport_ghu(ghu_name: str, data_dir: Path, output_dir: Path) -> Path:
     tbl_appareils = appareil_counts_table(aphp, ghu_name)
 
     # Survie (stade II comme représentatif)
-    fig_surv = survival_by_stage(surv, ghu_name, "SEIN", year=last_year)
+    fig_surv = survival_by_stage(surv, ghu_name, "SEIN")   # année = dernière avec survie (repli interne)
     fig_delay = delay_evolution(aphp, ghu_name, "SEIN")
 
     nav = "\n".join([
@@ -1177,7 +1177,7 @@ def build_rapport_appareil(appareil: str, data_dir: Path, output_dir: Path,
     fig_tree = treemap_organes(aphp, entity, appareil, last_year)
 
     # Survie : répartition par stade + évolution POUR LES DEUX stades (I-III et IV)
-    fig_surv = survival_by_stage(surv, entity, appareil, year=last_year)
+    fig_surv = survival_by_stage(surv, entity, appareil)   # année = dernière avec survie (repli interne)
     fig_surv_evo_i3 = survival_evolution(surv, entity, appareil, stade="I-III")
     fig_surv_evo_iv = survival_evolution(surv, entity, appareil, stade="IV")
 
@@ -1357,7 +1357,7 @@ def build_rapport_organe(organe: str, appareil: str, data_dir: Path, output_dir:
     surv_org = surv[(surv.organe == organe) & (surv.appareil == appareil)] if surv is not None else pd.DataFrame()
     org_surv = organe if not surv_org.empty else "TOTAL"
     fig_surv = survival_by_stage(surv, entity, appareil,
-                                 **({"organe": organe} if not surv_org.empty else {}), year=last_year)
+                                 **({"organe": organe} if not surv_org.empty else {}))
     fig_surv_evo_i3 = survival_evolution(surv, entity, appareil, organe=org_surv, stade="I-III")
     fig_surv_evo_iv = survival_evolution(surv, entity, appareil, organe=org_surv, stade="IV")
 
