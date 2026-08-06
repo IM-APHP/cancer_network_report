@@ -34,7 +34,9 @@ jobs:
       # job → le job deploy (needs: build) ne s'exécute pas : aucune page vide
       # ne peut être publiée.
       - name: Smoke test (garde-fou pré-build)
-        run: python tests/smoke_test.py
+        run: |
+          python tests/smoke_test.py
+          python tests/test_alignement_aphp.py
 
       - name: Génération des rapports HTML
         run: python run_reports.py

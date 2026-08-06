@@ -498,7 +498,12 @@ def _lire_feuille_aphp(path, conf, source, masque, portee_retenue):
     app = appareil.where(gran != "total", SENTINELLE)        # total → appareil=TOTAL
     org = organe.where(gran == "organe", SENTINELLE)         # total/appareil → organe=TOTAL
 
-    cadre = pd.DataFrame({"annee": annee.values, "entite": "AP-HP",
+    # « annee » passé en SERIES (pas .values) : cadre hérite ainsi de l'index FILTRÉ de
+    # df, sur lequel s'alignent les mesures assignées ensuite (_appliquer_mesures_bn).
+    # Avec .values, cadre prenait un RangeIndex ≠ index filtré → mesures décalées/NaN
+    # dès que les lignes AP-HP ne sont pas en tête du fichier (cas réel : blocs Hop/GHU
+    # avant). Aligné sur _lire_feuille_regional. Cf. tests/test_alignement_aphp.py.
+    cadre = pd.DataFrame({"annee": annee, "entite": "AP-HP",
                           "appareil": app.values, "organe": org.values})
     _appliquer_mesures_bn(df, cadre, masque)
 
