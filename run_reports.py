@@ -16,8 +16,10 @@ Usage :
     python run_reports.py --organe "Sein" --appareil "SEIN"
 """
 
+import os
 import sys
 import argparse
+from multiprocessing import get_context
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -79,7 +81,65 @@ def _mappings(fictif: bool):
             mapping_hopital_ghu_delais(str(DATA_DIR), fictif=False))
 
 
-def build_all_reports(fictif: bool = True):
+# ── Build parallèle des pages (P2) ────────────────────────────────────────────────
+# Les pages GHU / appareil / organe sont indépendantes → pool multiprocessing en mode
+# « spawn » (aucun état partagé : chaque worker réimporte les modules, reçoit le flag
+# fictif/réel EXPLICITEMENT et reconstruit ses propres caches mémoïsés — jamais de
+# structure mutable partagée entre process). Repli séquentiel : --sequentiel ou
+# RAPPORTS_SEQUENTIEL=1 (même chemin de code qu'avant, page par page dans ce process).
+_ETAT_WORKER: dict = {}
+
+
+def _init_worker(data_dir, output_dir, fictif):
+    """Initialisation d'un worker : flag fictif/réel + vues préchargées (une seule
+    lecture de donnees.csv par process grâce à la mémoïsation)."""
+    from report_builder import set_fake_data, load_aphp, load_regional, load_survival
+    set_fake_data(fictif)
+    _ETAT_WORKER.update(data_dir=data_dir, output_dir=output_dir)
+    _ETAT_WORKER["aphp"] = load_aphp(data_dir)
+    _ETAT_WORKER["reg"] = load_regional(data_dir)
+    _ETAT_WORKER["surv"] = load_survival(data_dir)
+
+
+def _construire_page(tache):
+    """Construit UNE page (worker). ``tache`` = ("ghu", ghu) |
+    ("appareil", app, entite) | ("organe", org, app, entite)."""
+    from report_builder import (build_rapport_ghu, build_rapport_appareil,
+                                build_rapport_organe)
+    genre, *args = tache
+    d, o = _ETAT_WORKER["data_dir"], _ETAT_WORKER["output_dir"]
+    if genre == "ghu":
+        build_rapport_ghu(args[0], d, o)
+    elif genre == "appareil":
+        app, entite = args
+        build_rapport_appareil(app, d, o, entity=entite, aphp=_ETAT_WORKER["aphp"],
+                               reg=_ETAT_WORKER["reg"], surv=_ETAT_WORKER["surv"])
+    else:
+        org, app, entite = args
+        build_rapport_organe(org, app, d, o, entity=entite, aphp=_ETAT_WORKER["aphp"],
+                             reg=_ETAT_WORKER["reg"], surv=_ETAT_WORKER["surv"])
+    return tache
+
+
+def _construire_pages(taches, fictif, sequentiel):
+    """Exécute les tâches de pages — pool spawn par défaut, séquentiel en repli."""
+    if sequentiel:
+        _init_worker(DATA_DIR, OUTPUT_DIR, fictif)
+        for t in taches:
+            _construire_page(t)
+        return
+    nproc = min(os.cpu_count() or 4, 10)
+    ctx = get_context("spawn")                      # isolation stricte, y compris sous Linux
+    with ctx.Pool(nproc, initializer=_init_worker,
+                  initargs=(DATA_DIR, OUTPUT_DIR, fictif)) as pool:
+        fini = 0
+        for _ in pool.imap_unordered(_construire_page, taches, chunksize=8):
+            fini += 1
+            if fini % 100 == 0:
+                print(f"    … {fini}/{len(taches)} pages")
+
+
+def build_all_reports(fictif: bool = True, sequentiel: bool = False):
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     # Pre-load dataframes once
@@ -112,35 +172,37 @@ def build_all_reports(fictif: bool = True):
 
     _verifier_exclusions(surv, mapping, delais_hop, mapping_delais)
 
-    print("\n  Rapports GHU individuels...")
-    for ghu in GHU_LIST:
-        out = build_rapport_ghu(ghu, DATA_DIR, OUTPUT_DIR)
-        if out: print(f"    → {out.name}")
-
-    print("\n  Rapports par appareil (AP-HP)...")
-    for app in appareils:
-        out = build_rapport_appareil(app, DATA_DIR, OUTPUT_DIR, entity="AP-HP",
-                                     aphp=aphp, reg=reg, surv=surv)
-        if out: print(f"    → {out.name}")
-
-    print("\n  Rapports par appareil × GHU (84 fichiers)...")
-    for app in appareils:
-        for ghu in GHU_LIST:
-            out = build_rapport_appareil(app, DATA_DIR, OUTPUT_DIR, entity=ghu,
-                                         aphp=aphp, reg=reg, surv=surv)
-
-    print("\n  Rapports par organe (AP-HP)...")
-    for app, organes in organes_by_app.items():
-        for org in organes:
-            out = build_rapport_organe(org, app, DATA_DIR, OUTPUT_DIR, entity="AP-HP",
-                                       aphp=aphp, reg=reg, surv=surv)
-
-    print("\n  Rapports par organe × GHU...")
-    for app, organes in organes_by_app.items():
-        for org in organes:
-            for ghu in GHU_LIST:
-                out = build_rapport_organe(org, app, DATA_DIR, OUTPUT_DIR, entity=ghu,
-                                           aphp=aphp, reg=reg, surv=surv)
+    # Pages indépendantes → liste de tâches (ordre = ancien ordre séquentiel).
+    taches = [("ghu", ghu) for ghu in GHU_LIST]
+    taches += [("appareil", app, "AP-HP") for app in appareils]
+    taches += [("appareil", app, ghu) for app in appareils for ghu in GHU_LIST]
+    taches += [("organe", org, app, "AP-HP")
+               for app, organes in organes_by_app.items() for org in organes]
+    taches += [("organe", org, app, ghu)
+               for app, organes in organes_by_app.items() for org in organes
+               for ghu in GHU_LIST]
+    # Déduplication par FICHIER CIBLE (dernier écrivain conservé). Des slugs d'organe
+    # entrent en collision (« Non décidable » présent sous 12 appareils, organes NaN →
+    # slug 'nan') : en séquentiel le dernier écrasait silencieusement les autres ; on
+    # reproduit EXACTEMENT ce résultat avec une seule écriture par cible — indispensable
+    # au mode parallèle (sinon course entre écrivains) et plus rapide (tâches en moins).
+    def _cible(t):
+        genre = t[0]
+        if genre == "ghu":
+            return ("ghu", slugify(t[1]))
+        if genre == "appareil":
+            return ("appareil", slugify(t[1]), t[2])
+        return ("organe", slugify(str(t[1])), t[3])      # nom d'organe seul (pas l'appareil)
+    par_cible = {_cible(t): t for t in taches}            # dict : la DERNIÈRE tâche gagne
+    doublons = len(taches) - len(par_cible)
+    if doublons:
+        print(f"  ⚠ {doublons} tâche(s) de page en collision de slug (organes partagés "
+              f"entre appareils, ex. « Non décidable ») — dernier écrivain conservé, "
+              f"comme en séquentiel.")
+    taches = list(par_cible.values())
+    mode = "séquentiel" if sequentiel else f"parallèle ({min(os.cpu_count() or 4, 10)} process)"
+    print(f"\n  Rapports GHU / appareil / organe — {len(taches)} pages, mode {mode}...")
+    _construire_pages(taches, fictif, sequentiel)
 
     html_files = list(OUTPUT_DIR.glob("*.html"))
     print(f"\n✓ {len(html_files)} fichiers HTML générés dans output/")
@@ -158,7 +220,11 @@ def main():
     parser.add_argument("--organe",     type=str)
     parser.add_argument("--comparaison-hopitaux", action="store_true",
                         help="Construit seulement la page de comparaison inter-hôpitaux")
+    parser.add_argument("--sequentiel", action="store_true",
+                        help="Build page par page dans ce process (repli sans multiprocessing ; "
+                             "équivaut à RAPPORTS_SEQUENTIEL=1)")
     args = parser.parse_args()
+    sequentiel = args.sequentiel or os.environ.get("RAPPORTS_SEQUENTIEL") == "1"
 
     # --real-data est ORTHOGONAL à --no-data/--data-only : il change la SOURCE
     # (fichiers réels au lieu des fictifs) et masque les bandeaux « données fictives ».
@@ -203,7 +269,7 @@ def main():
                                aphp=aphp, reg=reg, surv=surv)
         return
 
-    build_all_reports(fictif=fictif)
+    build_all_reports(fictif=fictif, sequentiel=sequentiel)
 
 
 if __name__ == "__main__":
