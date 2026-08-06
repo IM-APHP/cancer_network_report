@@ -25,7 +25,7 @@ chart_utils) restent inchangés et lisent des vues **larges** reconstruites à l
 
 ```
             FICTIF                                RÉEL
- src/generateur_fictif.py            data/*.xlsx (OECI + canceroBR réels)
+ src/generateur_fictif.py            data/*.xlsx (OECI + canceroBR + canceroAPHP réels)
    (référentiels → long,                    │  src/chargeur_long.py
     aucun xlsx, seed fixe)                  │  (piloté par descriptif_sources.yaml,
             │                               │   mapping colonne→variable EN CODE)
@@ -96,7 +96,17 @@ ont des **en-têtes fusionnés multi-lignes**. 32 hôpitaux sur le fichier réel
 Comparaison AP-HP vs établissements franciliens. **Multi-années dans un seul fichier**
 (colonne `Année`) — convention opposée à l'OECI. Patients (`_Pat_`) + séjours (`_Sej_`),
 onglets par tranche d'âge (`Total` / `Age < 18 ans` / `Age >= 18 ans` ; on lit `Total`).
-Granularité établissement (`N° Finess`, `Statut`, `Hôpital AP-HP`).
+Granularité établissement (`N° Finess`, `Statut`, `Hôpital AP-HP`). **Ne fournit plus que
+les comparateurs** (Clinique/CH/CHU/PSPH/CLCC) : l'entité AP-HP est exclue ici (elle
+double-comptait les patients multi-hôpitaux) et vient désormais de `canceroAPHP` ci-dessous.
+
+### Régional AP-HP dédupliqué — `canceroAPHP_<plage>_Pat_<date>.xlsx` et `…_Sej_<date>.xlsx`
+Fournit l'entité **AP-HP** du régional (source `BN`, niveau `aphp`), **déjà dédupliquée à la
+source** (pas de somme d'hôpitaux). Même convention que `canceroBR` (multi-années colonne
+`Année`, onglets d'âge, on lit `Total`). Colonne `Niveau` en **« portée - granularité »**
+(`AP-HP - Total` / `AP-HP - Appareil` / `AP-HP - Organe`, + variantes `GH`/`Hop` **ignorées**) :
+seule la **portée AP-HP** est retenue. Mesures identiques à `canceroBR` (chirurgie 0j/>0j
+sommées). Fichiers **absents tolérés** (avertit, ne plante pas). Schéma long **inchangé**.
 
 ## Modules
 
@@ -145,7 +155,10 @@ CHR/U → CHU · PSPH/EBNL → PSPH · CLCC → CLCC.
 
 - **OECI = sélection / régional = agrégation** (volontairement inverse). L'OECI contient déjà
   les lignes pré-agrégées à chaque `Niveau` : on SÉLECTIONNE et on mappe, on ne somme jamais
-  (sinon double comptage). Le régional est par établissement : on SOMME par type.
+  (sinon double comptage). Le régional `canceroBR` est par établissement : on SOMME par type
+  (comparateurs). **Exception AP-HP** : depuis `canceroAPHP`, l'AP-HP est **pré-dédupliquée à
+  la source** — on la SÉLECTIONNE (portée AP-HP), on ne somme pas (l'ancienne somme des
+  hôpitaux `canceroBR` double-comptait les patients passés par plusieurs hôpitaux).
 - **Survie & `population`** : chaque combinaison existe en double (`tous`/`nouveaux`). **Filtrer
   une population AVANT toute somme/pondération** de `nb_patients_stade`, sinon double comptage.
 - **Survie niveau appareil** (`organe="TOTAL"`) : reconstruite par agrégation pondérée
@@ -177,10 +190,12 @@ localement avant de pousser.
 
 ## Points ouverts / à faire
 
-- **Validation régionale réelle** : `chargeur_long` (disposition régionale `BN`, 8 dimensions
-  par position, `STATUT2TYPE`) n'a pas encore été exercé sur de **vrais** `canceroBR` (absents de
-  `data/`). Dès qu'ils arrivent : relancer la comparaison loader-vs-migration ou un `--real-data`
-  complet pour confirmer.
+- **Validation régionale réelle** : `chargeur_long` (dispositions `canceroBR` par établissement
+  et `canceroAPHP` par portée) parse correctement la **structure** des fichiers d'exemple mais
+  leurs **mesures sont vides** (gabarits) — la validation des **magnitudes** reste à faire sur des
+  extraits peuplés. À ce moment-là : vérifier via `_journaliser_delta_aphp` que l'AP-HP dédupliqué
+  (`canceroAPHP`) est **≤** l'ancienne somme `canceroBR` (l'écart = double-comptes supprimés) et
+  que les comparateurs (Clinique/CH/CHU/PSPH/CLCC) sont **strictement inchangés**.
 - **`age`** (`pédiatrie`/`adultes`) : chantier différé — les onglets âge régionaux
   (`Age < 18 ans` / `Age >= 18 ans`) existent mais ne sont pas encore exploités (`age = tous`).
 - **Référentiel hôpitaux** : pas de référentiel canonique unique dans les fichiers AP-HP

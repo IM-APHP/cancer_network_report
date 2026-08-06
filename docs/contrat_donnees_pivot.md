@@ -43,11 +43,17 @@ Un seul fichier, **`donnees.csv`** (format long / *tidy*). Une ligne = **une obs
 
 | `source` | Système d'origine | Couvre | Niveaux produits |
 |---|---|---|---|
-| `BN` | Base nationale PMSI | Régional : patients + séjours | `aphp`, `type_etab` |
+| `BN` | Base nationale PMSI | Régional : patients + séjours | `aphp`, `type_etab` |¹
 | `DIM APHP` | Base PMSI AP-HP (via le DIM) | OECI **hors survie** : patients, séjours, chirurgie, délais | `aphp`, `ghu`, `hopital` |
 | `EDS APHP` | Entrepôt de données AP-HP | **Survie** | `aphp`, `ghu`, `hopital` |
 
 **Important :** un même fichier OECI **mélange deux sources** — sa feuille « Survie globale » est `EDS APHP`, ses autres feuilles sont `DIM APHP`. C'est pour cela que la survie a ses propres libellés `Niveau` et ses formes GHU courtes : autre système, autre producteur, autre format. → `source` se déclare **par feuille** dans le YAML. Le fichier régional est entièrement `BN`.
+
+> ¹ **`BN` provient de deux fichiers** (schéma long identique) : `canceroBR` fournit les
+> **comparateurs** (`type_etab` : Clinique/CH/CHU/PSPH/CLCC), `canceroAPHP` fournit l'entité
+> **`AP-HP`** (`aphp`) **dédupliquée à la source**. Auparavant l'AP-HP régional était la
+> **somme** des hôpitaux AP-HP de `canceroBR`, qui **double-comptait** les patients passés par
+> plusieurs hôpitaux — d'où la bascule vers `canceroAPHP`. La clé d'unicité est inchangée.
 
 ---
 
