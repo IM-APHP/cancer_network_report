@@ -376,16 +376,26 @@ def survival_delay_table(
         + "</tr>"
     )
 
+    # Pré-index des valeurs (un filtre GLOBAL par table au lieu de ~180 filtres
+    # booléens par page). Sémantique inchangée : drop_duplicates(keep="first")
+    # reproduit exactement l'ancien « premier match » (s.iloc[0]).
+    _s = surv_df[(surv_df.entite == entity) & (surv_df.organe == "TOTAL")
+                 & (surv_df.population == "tous")]
+    _s = _s.drop_duplicates(subset=["annee", "appareil", "stade"], keep="first")
+    _survies = {(int(a), ap, st): v for a, ap, st, v in
+                zip(_s["annee"], _s["appareil"], _s["stade"], _s["survie_5ans"])}
+    _d = aphp_df[(aphp_df.entite == entity) & (aphp_df.organe == "TOTAL")]
+    _d = _d.drop_duplicates(subset=["annee", "appareil"], keep="first")
+    _delais = {(int(a), ap): v for a, ap, v in
+               zip(_d["annee"], _d["appareil"],
+                   _d.get("delai_global_median", pd.Series(index=_d.index, dtype=float)))}
+
     def _survie_cell(yr, app, stade):
         """Cellule survie 5 ans pour un stade donné (population « tous »). NaN/absent → « — »."""
-        s = surv_df[
-            (surv_df.entite == entity) & (surv_df.appareil == app)
-            & (surv_df.organe == "TOTAL") & (surv_df.annee == yr)
-            & (surv_df.population == "tous") & (surv_df.stade == stade)
-        ]
-        if s.empty or pd.isna(s.iloc[0]["survie_5ans"]):
+        v = _survies.get((int(yr), app, stade))
+        if v is None or pd.isna(v):
             return '<td style="text-align:center">—</td>'
-        v = float(s.iloc[0]["survie_5ans"])
+        v = float(v)
         bg = "#d4edda" if v >= 80 else ("#fff3cd" if v >= 50 else "#f8d7da")
         return f'<td style="text-align:center;background:{bg};padding:5px 6px">{v:.0f}%</td>'
 
@@ -397,12 +407,9 @@ def survival_delay_table(
             surv_cells += _survie_cell(yr, app, "I-III") + _survie_cell(yr, app, "IV")
 
             # Délai (inchangé : non décliné par stade)
-            d = aphp_df[
-                (aphp_df.entite == entity) & (aphp_df.appareil == app)
-                & (aphp_df.organe == "TOTAL") & (aphp_df.annee == yr)
-            ]
-            if not d.empty and pd.notna(d.iloc[0].get("delai_global_median")):
-                delay_cells += f'<td style="text-align:center;padding:5px 6px">{int(d.iloc[0]["delai_global_median"])}j</td>'
+            dv = _delais.get((int(yr), app))
+            if dv is not None and pd.notna(dv):
+                delay_cells += f'<td style="text-align:center;padding:5px 6px">{int(dv)}j</td>'
             else:
                 delay_cells += '<td style="text-align:center">—</td>'
 
